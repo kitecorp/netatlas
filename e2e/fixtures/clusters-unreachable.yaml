@@ -1,0 +1,9 @@
+# One cluster whose API server address refuses every connection: nothing listens on port 2.
+# Not port 9: fetch blocks it as a "bad port" before connecting, so it is never refused.
+clusters:
+  - name: fixture-down
+    server: https://127.0.0.1:2
+    caFile: ca.crt
+    login:
+      type: token
+      tokenFile: token

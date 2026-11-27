@@ -1,0 +1,44 @@
+image:
+  repository: ghcr.io/kitecorp/netatlas
+  # Empty means the chart's appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+serviceAccount:
+  # On EKS, eks.amazonaws.com/role-arn names the role whose identity signs netatlas's tokens.
+  annotations: {}
+
+podAnnotations: {}
+
+# The clusters netatlas reads; list at least one, or the install fails with "clusters is empty".
+# Each entry:
+#   name:   a DNS label, shown in the app and in URLs.
+#   server, caData: the API server and its CA (base64 PEM), for token and eks clusters.
+#   login:
+#     type: inCluster (the cluster netatlas runs in, read with its own ServiceAccount),
+#           token (a ServiceAccount token kept in a Secret beside netatlas) or
+#           eks (the pod's AWS role signs the token `aws eks get-token` makes).
+#     secretName: token login only. The Secret holds `token` and `ca.crt`; its ca.crt is used
+#                 unless caData is set.
+#     clusterName, region: eks login only.
+#   istio: rootNamespace and trustDomain, when they are not istio-system and cluster.local.
+clusters: []
+
+# Anyone who reaches the ingress sees every cluster's policies, and Apply sends a Kubernetes token:
+# protect it, and serve it over TLS (the editor offers Apply only over HTTPS). host is required when
+# enabled is true.
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  host: ""
+  tls:
+    # The Secret holding the certificate for host.
+    secretName: ""
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 512Mi

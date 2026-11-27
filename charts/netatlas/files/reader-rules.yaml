@@ -1,0 +1,18 @@
+# The rules of netatlas's read-only ClusterRole: read access to exactly the kinds the direct source
+# watches, and nothing else. No Secrets, and no verb that changes anything. A test compares this file
+# with the list the source watches, so the two change together.
+- apiGroups: [""]
+  resources: [namespaces, pods]
+  verbs: [get, list, watch]
+- apiGroups: [apps]
+  resources: [daemonsets, replicasets]
+  verbs: [get, list, watch]
+- apiGroups: [batch]
+  resources: [jobs]
+  verbs: [get, list, watch]
+- apiGroups: [networking.k8s.io]
+  resources: [networkpolicies]
+  verbs: [get, list, watch]
+- apiGroups: [security.istio.io]
+  resources: [authorizationpolicies]
+  verbs: [get, list, watch]

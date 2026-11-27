@@ -1,0 +1,27 @@
+{{- if include "netatlas.inCluster" . }}
+# Read access to the cluster netatlas runs in, for an inCluster login, and only then. The rules live in
+# one file, which deploy/reader-access.yaml and the Terraform example repeat for the clusters read from outside.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "netatlas.name" . }}-reader
+  labels:
+    {{- include "netatlas.labels" . | nindent 4 }}
+rules:
+  {{- .Files.Get "files/reader-rules.yaml" | nindent 2 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "netatlas.name" . }}-reader
+  labels:
+    {{- include "netatlas.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "netatlas.name" . }}-reader
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "netatlas.name" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

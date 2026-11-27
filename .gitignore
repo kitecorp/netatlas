@@ -1,0 +1,16 @@
+node_modules/
+# Next.js loads .env files by itself; credentials kept in one never belong in this public repository.
+.env*
+.next/
+test-results/
+playwright-report/
+e2e/.generated/
+*.tsbuildinfo
+# next build writes it, and it imports types that exist only after a build.
+next-env.d.ts
+
+# Terraform writes these when the example is initialised or applied.
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*

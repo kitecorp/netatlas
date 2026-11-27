@@ -1,0 +1,18 @@
+# Only what next build reads goes into the build context.
+.git
+.github
+.next
+node_modules
+test-results
+playwright-report
+e2e/.generated
+*.tsbuildinfo
+next-env.d.ts
+charts
+deploy
+examples
+Dockerfile
+.dockerignore
+**/.terraform
+**/*.tfstate*
+.env*

@@ -1,0 +1,157 @@
+# The example shop's workloads (src/model/fixtures/shop.ts), without kube-system's coredns, which kind
+# already runs. Each pod runs the pause image: netatlas reads the pods' labels, service accounts and
+# declared ports, so nothing needs to listen. Each workload runs as its own ServiceAccount, the
+# identity its Istio principal names.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: gateway
+  namespace: ingress
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  namespace: ingress
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: gateway }
+  template:
+    metadata:
+      labels: { app: gateway }
+    spec:
+      serviceAccountName: gateway
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          ports:
+            - { name: https, containerPort: 443, protocol: TCP }
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: frontend
+  namespace: shop
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: shop
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: frontend }
+  template:
+    metadata:
+      labels: { app: frontend }
+    spec:
+      serviceAccountName: frontend
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          ports:
+            - { name: http, containerPort: 8080, protocol: TCP }
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cart
+  namespace: shop
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cart
+  namespace: shop
+spec:
+  replicas: 3
+  selector:
+    matchLabels: { app: cart }
+  template:
+    metadata:
+      labels: { app: cart }
+    spec:
+      serviceAccountName: cart
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          ports:
+            - { name: http, containerPort: 8080, protocol: TCP }
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: recommender
+  namespace: shop
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: recommender
+  namespace: shop
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: recommender }
+  template:
+    metadata:
+      labels: { app: recommender }
+    spec:
+      serviceAccountName: recommender
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: api
+  namespace: payments
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: payments
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: api }
+  template:
+    metadata:
+      labels: { app: api }
+    spec:
+      serviceAccountName: api
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          ports:
+            - { name: https, containerPort: 8443, protocol: TCP }
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: postgres
+  namespace: payments
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: payments
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: postgres }
+  template:
+    metadata:
+      labels: { app: postgres }
+    spec:
+      serviceAccountName: postgres
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          ports:
+            - { name: postgres, containerPort: 5432, protocol: TCP }

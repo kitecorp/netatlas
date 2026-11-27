@@ -1,0 +1,20 @@
+# The chart's test values: the cluster netatlas runs in, a kind cluster read with a token, and an EKS
+# cluster.
+clusters:
+  - name: atlas-a
+    login:
+      type: inCluster
+  - name: atlas-b
+    server: https://172.18.0.3:6443
+    login:
+      type: token
+      secretName: netatlas-atlas-b
+  - name: prod-eu-1
+    server: https://ABCDEF0123456789.gr7.eu-west-1.eks.amazonaws.com
+    caData: LS0t
+    login:
+      type: eks
+      clusterName: prod-eu-1
+      region: eu-west-1
+    istio:
+      trustDomain: prod.example

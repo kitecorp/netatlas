@@ -1,0 +1,101 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "netatlas.name" . }}
+  labels:
+    {{- include "netatlas.labels" . | nindent 4 }}
+spec:
+  # One replica: each pod keeps its own watch of every cluster, so more would only multiply the load
+  # on the API servers.
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "netatlas.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "netatlas.selectorLabels" . | nindent 8 }}
+      annotations:
+        # A changed cluster list rolls the pod, because netatlas reads it once at start.
+        checksum/clusters: {{ include "netatlas.registry" . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "netatlas.name" . }}
+      {{- if not (include "netatlas.inCluster" .) }}
+      # Only an inCluster login reads with the ServiceAccount's token. IRSA and EKS Pod Identity still
+      # work: their webhook adds its own projected token volume (aws/amazon-eks-pod-identity-webhook,
+      # pkg/handler/handler.go, the ServiceAccountTokenProjection it mounts in both modes).
+      automountServiceAccountToken: false
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        # The image's node user; a numeric id lets the kubelet check runAsNonRoot.
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: netatlas
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          env:
+            - name: NETATLAS_CLUSTERS_FILE
+              value: /etc/netatlas/clusters.yaml
+            - name: PORT
+              value: "3000"
+            - name: HOSTNAME
+              value: 0.0.0.0
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 10
+          # /api/health answers 200 once the server has read its registry, whatever the clusters'
+          # state, so an unreachable cluster never restarts the pod.
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 20
+            failureThreshold: 6
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: clusters
+              mountPath: /etc/netatlas
+              readOnly: true
+            {{- range include "netatlas.tokenClusters" . | fromJsonArray }}
+            - name: cluster-{{ .name }}
+              mountPath: {{ include "netatlas.secretDir" .name }}
+              readOnly: true
+            {{- end }}
+            # The root filesystem is read-only; Next.js writes only its cache and temporary files.
+            - name: next-cache
+              mountPath: /app/.next/cache
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: clusters
+          configMap:
+            name: {{ include "netatlas.name" . }}
+        {{- range include "netatlas.tokenClusters" . | fromJsonArray }}
+        - name: cluster-{{ .name }}
+          secret:
+            secretName: {{ .login.secretName }}
+        {{- end }}
+        - name: next-cache
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}

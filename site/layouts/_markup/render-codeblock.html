@@ -1,0 +1,4 @@
+{{- /* A code block keeps its text, uncoloured, and takes the page's light or dark scheme. Hugo's highlighter would
+write fixed colours into it. It ends with a line end, as Hugo's own code blocks do, so a heading after it starts its
+own line, where scripts/check-site.sh reads the Made by heading. */ -}}
+<pre><code{{ with .Type }} class="language-{{ . }}"{{ end }}>{{ .Inner | htmlEscape | safeHTML }}</code></pre>
