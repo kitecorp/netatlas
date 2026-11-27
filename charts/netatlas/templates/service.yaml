@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "netatlas.name" . }}
+  labels:
+    {{- include "netatlas.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "netatlas.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP

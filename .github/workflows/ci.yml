@@ -1,0 +1,155 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+# A newer push to a pull request replaces the run of its older head. Each push to master gets a group
+# of its own: GitHub cancels and replaces a pending run in the same group even without
+# cancel-in-progress (docs.github.com, "Control the concurrency of workflows and jobs").
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# No job pushes, so every checkout leaves the token out of the git config, where the install scripts
+# npm ci runs could otherwise read it.
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    # The default is six hours; apt-get in the Playwright install can hang that long.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      # pages.yml and release.yml never run on a pull request, so a mistake in them shows here first.
+      - name: Lint the workflows
+        run: docker run --rm -v "$PWD:/repo" --workdir /repo rhysd/actionlint:1.7.12 -color
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run e2e:standalone
+      - uses: actions/upload-artifact@v7.0.2
+        if: failure() || cancelled()
+        with:
+          name: e2e-standalone
+          path: playwright-report/
+          if-no-files-found: ignore
+
+  # The image, the chart and the access example: what a release publishes, built without publishing.
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - uses: azure/setup-helm@v5.1.0
+        with:
+          version: v4.3.1
+      - run: helm lint charts/netatlas --values charts/netatlas/ci/two-clusters-values.yaml
+      - run: npm run test:package
+      - uses: docker/setup-buildx-action@v4.4.1
+      - uses: docker/build-push-action@v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: false
+          # The layers come from GitHub's cache when the lockfile and sources allow it. A failed cache
+          # write fails nothing (https://docs.docker.com/build/ci/github-actions/cache/).
+          cache-from: type=gha
+          cache-to: type=gha,mode=max,ignore-error=true
+      - uses: hashicorp/setup-terraform@v4.0.1
+        with:
+          terraform_version: 1.17.1
+          terraform_wrapper: false
+      - name: Terraform example
+        working-directory: examples/terraform/eks-access
+        run: |
+          terraform fmt -check
+          terraform init -backend=false -input=false
+          terraform validate
+
+  # The journeys against netatlas installed by its chart in two kind clusters, one with Istio.
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: helm/kind-action@v1.15.2
+        with:
+          install_only: true
+      - uses: azure/setup-helm@v5.1.0
+        with:
+          version: v4.3.1
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: bash scripts/e2e/up.sh
+      - run: bash scripts/e2e/install.sh
+      - run: npm run e2e:kind
+      - name: Gather what failed
+        if: failure() || cancelled()
+        run: |
+          mkdir -p e2e-logs
+          kubectl --context kind-atlas-a -n netatlas logs deployment/netatlas --all-containers > e2e-logs/netatlas.log 2>&1 || true
+          for cluster in atlas-a atlas-b; do
+            kubectl --context "kind-$cluster" get pods -A -o wide > "e2e-logs/pods-$cluster.txt" 2>&1 || true
+          done
+      - uses: actions/upload-artifact@v7.0.2
+        if: failure() || cancelled()
+        with:
+          name: e2e-kind
+          path: |
+            e2e-logs/
+            playwright-report/
+          if-no-files-found: ignore
+
+  # The documentation site, built from the README and the pages under docs/ and checked as pages.yml
+  # publishes it, so a page without the credit or a broken link fails here first.
+  site:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build and check the site
+        run: |
+          scripts/build-site.sh "$RUNNER_TEMP/site"
+          scripts/check-site.sh "$RUNNER_TEMP/site"
+
+  # The one check the branch rules require. Later jobs join `needs`, so this list is the whole gate.
+  Required:
+    if: always()
+    needs: [checks, package, e2e, site]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every needed job succeeded
+        shell: bash
+        env:
+          # A skipped or cancelled job is not `success`, so it fails the gate too.
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: for r in $RESULTS; do [ "$r" = success ] || exit 1; done

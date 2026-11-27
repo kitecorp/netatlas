@@ -1,0 +1,9 @@
+Open netatlas on http://localhost:3000 after:
+  kubectl port-forward --namespace {{ .Release.Namespace }} service/{{ include "netatlas.name" . }} 3000:80
+{{- if .Values.ingress.enabled }}
+
+Anyone who can reach {{ .Values.ingress.host }} sees every cluster's policies. netatlas has no login of its own, so protect this ingress. Apply sends a Kubernetes token: serve it over TLS only.
+{{- if not .Values.ingress.tls.secretName }}
+This ingress names no TLS secret. netatlas offers Apply only over HTTPS, so unless TLS ends in front of the ingress, Apply stays off there and Copy YAML still works.
+{{- end }}
+{{- end }}

@@ -1,0 +1,10 @@
+apiVersion: v2
+name: netatlas
+description: See the network policies of several Kubernetes clusters from one place.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/kitecorp/netatlas
+sources:
+  - https://github.com/kitecorp/netatlas
+license: Apache-2.0

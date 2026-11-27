@@ -1,0 +1,37 @@
+# The example shop's two AuthorizationPolicies (src/model/fixtures/shop.ts), for atlas-b, the
+# cluster with Istio.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: cart-callers
+  namespace: shop
+spec:
+  selector:
+    matchLabels: { app: cart }
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals: [cluster.local/ns/shop/sa/frontend]
+      to:
+        - operation:
+            methods: [GET]
+            paths: [/cart]
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: api-callers
+  namespace: payments
+spec:
+  selector:
+    matchLabels: { app: api }
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals: [cluster.local/ns/shop/sa/cart]
+      to:
+        - operation:
+            methods: [POST]
+            paths: [/pay]

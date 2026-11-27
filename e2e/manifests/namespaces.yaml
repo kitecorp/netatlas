@@ -1,0 +1,16 @@
+# The namespaces of the example shop (src/model/fixtures/shop.ts). kube-system is kind's own. up.sh
+# labels shop and payments for Istio in atlas-b only, so the label is not written here.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ingress
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: shop
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: payments

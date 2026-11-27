@@ -1,0 +1,63 @@
+# Read access for netatlas to a cluster it reads with a token login. Apply this in the cluster to
+# read, then copy the Secret's token and ca.crt into a Secret beside netatlas with the pipe in
+# docs/clusters.md, step 2, which never prints the token: it does not expire, so it stays out of
+# terminal scrollback.
+#
+#   kubectl apply -f reader-access.yaml
+#
+# The ClusterRole's rules are the chart's files/reader-rules.yaml: read on exactly the kinds netatlas
+# watches, no Secrets and no verb that changes anything. A test holds the two files together.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: netatlas-access
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: netatlas-reader
+  namespace: netatlas-access
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: netatlas-reader
+rules:
+  - apiGroups: [""]
+    resources: [namespaces, pods]
+    verbs: [get, list, watch]
+  - apiGroups: [apps]
+    resources: [daemonsets, replicasets]
+    verbs: [get, list, watch]
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [get, list, watch]
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies]
+    verbs: [get, list, watch]
+  - apiGroups: [security.istio.io]
+    resources: [authorizationpolicies]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: netatlas-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: netatlas-reader
+subjects:
+  - kind: ServiceAccount
+    name: netatlas-reader
+    namespace: netatlas-access
+---
+# A token that does not expire, for the ServiceAccount above. Kubernetes fills in token and ca.crt.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: netatlas-reader-token
+  namespace: netatlas-access
+  annotations:
+    kubernetes.io/service-account.name: netatlas-reader
+type: kubernetes.io/service-account-token

@@ -1,0 +1,32 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn", "oxc", "react", "nextjs", "import"],
+  "categories": {
+    "correctness": "error"
+  },
+  "ignorePatterns": [".next/**", "node_modules/**", "test-results/**", "playwright-report/**", "e2e/.generated/**"],
+  "overrides": [
+    {
+      "files": ["src/model/**", "src/editor/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              { "name": "next", "message": "src/model and src/editor do no I/O and import no framework." },
+              { "name": "react", "message": "src/model and src/editor do no I/O and import no framework." },
+              { "name": "react-dom", "message": "src/model and src/editor do no I/O and import no framework." },
+              { "name": "@kubernetes/client-node", "message": "src/model and src/editor do no I/O." }
+            ],
+            "patterns": [
+              { "group": ["node:*"], "message": "src/model and src/editor do no I/O." },
+              { "group": ["next/*"], "message": "src/model and src/editor do no I/O and import no framework." },
+              { "group": ["react-dom/*"], "message": "src/model and src/editor do no I/O and import no framework." },
+              { "group": ["@/server/*"], "message": "src/model and src/editor do not reach into the server." }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

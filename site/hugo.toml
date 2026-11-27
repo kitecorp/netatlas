@@ -1,0 +1,43 @@
+# The documentation site, built by scripts/build-site.sh from the README and the pages under docs/ as they are: no page
+# carries front matter or is copied, and each built page keeps its file's place, docs/<name>.md as docs/<name>.html and
+# the README as index.html, so a relative link between pages keeps its meaning. Every link between pages is relative,
+# so it works wherever the site is served. The project root is the repository's, so the link render hook can tell a
+# folder from a file anywhere in it.
+title = 'netatlas'
+# The site's address, the one line to change when it is served at another: only the canonical address, the Open Graph
+# address of each page, the sitemap and robots.txt name it.
+baseURL = 'https://kitecorp.github.io/netatlas/'
+uglyURLs = true
+# A page whose file name holds a capital is built under that name, so the links GitHub follows to it work here too.
+disablePathToLower = true
+# The pages and the sitemap alone: no list of the docs folder, no feed and no 404 page that no page links.
+disableKinds = ['section', 'taxonomy', 'term', 'rss', '404']
+enableRobotsTXT = true
+# The repository is mounted read-only, so the build writes nothing into it.
+noBuildLock = true
+
+[params]
+# Links to files outside the site lead here, at the commit built, which build-site.sh passes as HUGO_PARAMS_COMMIT.
+repository = 'https://github.com/kitecorp/netatlas'
+
+# The pages are written for GitHub's renderer, so the extensions it lacks are off: they would read a line that starts
+# with ": " as a definition, a heading that ends in {...} as attributes, and turn ' and -- into other characters.
+[markup.goldmark.extensions]
+definitionList = false
+typographer = false
+[markup.goldmark.parser.attribute]
+title = false
+# A page's own HTML shows as it does on GitHub; site/layouts/all.html refuses a page that writes a script, a frame or a
+# base element, so what GitHub would not run is never published either.
+[markup.goldmark.renderer]
+unsafe = true
+[[module.mounts]]
+source = 'README.md'
+target = 'content/_index.md'
+[[module.mounts]]
+source = 'docs'
+target = 'content/docs'
+files = ['*.md']
+[[module.mounts]]
+source = 'site/layouts'
+target = 'layouts'

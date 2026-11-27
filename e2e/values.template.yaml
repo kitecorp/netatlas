@@ -1,0 +1,13 @@
+# The chart values of the kind journeys. install.sh writes them to e2e/.generated/values.yaml with
+# ATLAS_B_SERVER replaced by atlas-b's API server on the kind network. atlas-a is the cluster netatlas
+# runs in, read with its own ServiceAccount; atlas-b is read with the reader token install.sh copies
+# into the Secret netatlas-atlas-b.
+clusters:
+  - name: atlas-a
+    login:
+      type: inCluster
+  - name: atlas-b
+    server: ATLAS_B_SERVER
+    login:
+      type: token
+      secretName: netatlas-atlas-b
