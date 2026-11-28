@@ -2,11 +2,50 @@ apiVersion: v2
 name: netatlas
 description: See the network policies of several Kubernetes clusters from one place.
 type: application
-version: 0.2.0
-appVersion: "0.2.0"
+version: 0.2.1
+appVersion: "0.2.1"
 home: https://github.com/kitecorp/netatlas
 sources:
   - https://github.com/kitecorp/netatlas
-# Chart metadata has no license field (helm lint warns about one); Artifact Hub reads it from this annotation.
+keywords:
+  - kubernetes
+  - network-policy
+  - istio
+  - authorization-policy
+  - service-mesh
+  - prometheus
+  - egress
+  - security
+  - multi-cluster
+maintainers:
+  - name: kitecorp
+    url: https://github.com/kitecorp
+# Chart.yaml has no field for a license, a category, images or screenshots (helm lint warns "unknown field" about a
+# license key), so Artifact Hub reads them from these annotations.
 annotations:
   artifacthub.io/license: Apache-2.0
+  artifacthub.io/category: security
+  artifacthub.io/links: |
+    - name: Documentation
+      url: https://kitecorp.github.io/netatlas/
+    - name: Source
+      url: https://github.com/kitecorp/netatlas
+    - name: support
+      url: https://github.com/kitecorp/netatlas/issues
+    - name: Release notes
+      url: https://github.com/kitecorp/netatlas/releases
+  artifacthub.io/images: |
+    - name: netatlas
+      image: ghcr.io/kitecorp/netatlas:0.2.1
+      platforms:
+        - linux/amd64
+        - linux/arm64
+  artifacthub.io/screenshots: |
+    - title: "Traffic: the calls Istio measured in the last 5 minutes, each marked against the policies"
+      url: https://raw.githubusercontent.com/kitecorp/netatlas/v0.2.1/docs/screenshots/traffic.png
+    - title: "Overview: every cluster in one table, and what needs attention in each"
+      url: https://raw.githubusercontent.com/kitecorp/netatlas/v0.2.1/docs/screenshots/overview.png
+    - title: "Policy map: which workload may call which, by NetworkPolicy and by Istio"
+      url: https://raw.githubusercontent.com/kitecorp/netatlas/v0.2.1/docs/screenshots/map.png
+    - title: "Outbound: each destination outside the cluster, who may call it and who does"
+      url: https://raw.githubusercontent.com/kitecorp/netatlas/v0.2.1/docs/screenshots/outbound.png

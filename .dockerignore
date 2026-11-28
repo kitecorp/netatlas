@@ -1,6 +1,12 @@
-# Only what next build reads goes into the build context.
+# The build context is the repository without what is listed here. Only the Dockerfile's build stage sees it: next build
+# reads the sources, its config and, for its type check, every .ts file tsconfig.json includes (the tests and journeys
+# among them), and the final image takes only Next.js's standalone output and static files. Files such as the README,
+# the docs and the scripts go in and are not read.
+# History and workflows, which the build never reads.
 .git
 .github
+# What a local install, build or test run writes. The image makes its own with npm ci and next build, and a local
+# node_modules, which may be built for another system, would replace the image's at COPY . .
 .next
 node_modules
 test-results
@@ -8,11 +14,14 @@ playwright-report
 e2e/.generated
 *.tsbuildinfo
 next-env.d.ts
+# The chart, the access manifests, the Terraform example and the files that build the image, none of which the app reads.
 charts
 deploy
 examples
 Dockerfile
 .dockerignore
+# Terraform's working files and state in any folder, and .env files, which Next.js would load into the build: each can
+# hold credentials, which never belong in an image.
 **/.terraform
 **/*.tfstate*
 .env*

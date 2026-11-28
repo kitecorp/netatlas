@@ -107,7 +107,7 @@ describe('the netatlas chart', () => {
     const { container } = pod(render());
 
     expect([container.image, container.env, container.ports, container.readinessProbe, container.livenessProbe, container.resources]).toStrictEqual([
-      'ghcr.io/kitecorp/netatlas:0.2.0',
+      'ghcr.io/kitecorp/netatlas:0.2.1',
       [
         { name: 'NETATLAS_CLUSTERS_FILE', value: '/etc/netatlas/clusters.yaml' },
         { name: 'PORT', value: '3000' },

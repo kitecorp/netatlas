@@ -31,23 +31,19 @@ jobs:
             exit 1
           fi
 
-      # The image tag, the chart version and its appVersion all come from the git tag, so a tag that
-      # disagrees with any of them would publish one version under another's name.
-      - name: The tag matches package.json and Chart.yaml
+      # The image tag and the chart file the push step expects come from the git tag; helm package
+      # takes the chart's version from Chart.yaml, and the chart's annotations name the image and the
+      # pictures. A tag that disagrees with Chart.yaml stops the release half way, after the image is
+      # pushed, and one that disagrees with the annotations lists another version's image or pictures.
+      # CI runs the same check without a tag, so a place left behind is found before the tag is pushed.
+      - name: The tag matches every place that names the version
         id: version
         shell: bash
         env:
           TAG: ${{ github.ref_name }}
         run: |
-          a=$(node -p "require('./package.json').version")
-          b=$(sed -n 's/^version:[[:space:]]*//p' charts/netatlas/Chart.yaml | tr -d "\"'")
-          c=$(sed -n 's/^appVersion:[[:space:]]*//p' charts/netatlas/Chart.yaml | tr -d "\"'")
-          v=${TAG#v}
-          if [ "$v" != "$a" ] || [ "$v" != "$b" ] || [ "$v" != "$c" ]; then
-            echo "::error::tag $TAG does not match package.json $a, Chart.yaml version $b and appVersion $c"
-            exit 1
-          fi
-          echo "version=$v" >> "$GITHUB_OUTPUT"
+          version=$(scripts/release-versions.sh "$TAG")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@v4.4.1
       - uses: docker/login-action@v4.7.0
@@ -99,3 +95,42 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
         run: gh release create "$TAG" --verify-tag --generate-notes
+
+  # The repository's metadata for Artifact Hub, pushed beside the chart under the tag artifacthub.io, where Artifact Hub
+  # reads it (https://artifacthub.io/docs/topics/repositories/helm-charts/). A job of its own, so that a failure here
+  # cannot stop the image and the chart, which the job above has already published.
+  artifacthub-metadata:
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      # The tag's commit, as the release job reads it. The token stays out of the git config: the job pushes a
+      # file with it, never commits.
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      # Without the file there is nothing to push, and oras would name only a path it cannot open; this says
+      # which file is missing and why it matters.
+      - name: The metadata file is in the repository
+        shell: bash
+        run: |
+          if [ ! -f artifacthub-repo.yml ]; then
+            echo "::error::artifacthub-repo.yml is not in the repository root, so there is no metadata to push for Artifact Hub"
+            exit 1
+          fi
+      - uses: oras-project/setup-oras@v2.0.4
+        with:
+          version: 1.4.0
+      - name: Push the metadata
+        shell: bash
+        env:
+          ACTOR: ${{ github.actor }}
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          printf '%s' "$TOKEN" | oras login ghcr.io --username "$ACTOR" --password-stdin
+          oras push ghcr.io/kitecorp/charts/netatlas:artifacthub.io \
+            --config /dev/null:application/vnd.cncf.artifacthub.config.v1+yaml \
+            artifacthub-repo.yml:application/vnd.cncf.artifacthub.repository-metadata.layer.v1.yaml

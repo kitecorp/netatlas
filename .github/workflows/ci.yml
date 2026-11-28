@@ -55,6 +55,9 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
+      # The release runs the same check against its tag; here it finds a place left behind before a tag exists.
+      - name: Every place names the same version
+        run: scripts/release-versions.sh
       - uses: actions/setup-node@v7.1.0
         with:
           node-version-file: .nvmrc
@@ -64,6 +67,10 @@ jobs:
         with:
           version: v4.3.1
       - run: helm lint charts/netatlas --values charts/netatlas/ci/two-clusters-values.yaml
+      # helm lint does not read the artifacthub.io annotations; Artifact Hub's own linter does. Its image is
+      # pinned by digest, which cannot move, and is built for linux/amd64 only.
+      - name: Lint the chart for Artifact Hub
+        run: docker run --rm --platform linux/amd64 -v "$PWD:/repo:ro" --workdir /repo artifacthub/ah:v1.24.0@sha256:97a90dba76f9cf550f0f93187222505ba104e3af72ab4a7bbe63b370aebaa6e7 ah lint --kind helm --path charts/netatlas
       - run: npm run test:package
       - uses: docker/setup-buildx-action@v4.4.1
       - uses: docker/build-push-action@v7.4.0

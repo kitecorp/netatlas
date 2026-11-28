@@ -76,5 +76,5 @@ netatlas 0.2.0 shows the network policies of your clusters, edits NetworkPolicie
 
 ## The release
 
-- The release workflow (`.github/workflows/release.yml`) names each action by version tag, for example `docker/login-action@v4.7.0`. The owner of an action can move a tag, and in this workflow the job token may write packages, and in the `github-release` job contents. Naming each action by commit is not done. Whether each named version exists was not checked.
-- The `github-release` job is unproven until the `v0.2.0` tag runs it for the first time. If it fails, use Re-run failed jobs: a full re-run stops at the check that the version is not published yet. The `gh` version on the runner was not checked.
+- The release workflow (`.github/workflows/release.yml`) names each action by version tag, for example `docker/login-action@v4.7.0`. The owner of an action can move a tag, and in this workflow the job token may write packages, and in the `github-release` job contents. Naming each action by commit is not done.
+- A failed run of the `github-release` job, or of the `artifacthub-metadata` job that pushes the Artifact Hub metadata, is repeated with Re-run failed jobs: a full re-run stops at the check that the version is not published yet.

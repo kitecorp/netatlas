@@ -1,0 +1,4 @@
+# Artifact Hub marks the netatlas listing as from a verified publisher when it finds this ID in a file pushed to the
+# chart's registry under the tag artifacthub.io, which the release workflow does. The ID is public: it is the one
+# Artifact Hub shows for the repository netatlas of the organization kitecorp.
+repositoryID: 6ca191e7-e8b3-454b-94dc-df52d8e096c4
