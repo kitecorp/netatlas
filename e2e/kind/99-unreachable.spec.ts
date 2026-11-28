@@ -13,7 +13,7 @@ test('a stopped cluster shows as unreachable with the age of its data, without a
 
   // The page is not reloaded: the change stream renders it again once a probe fails.
   await expect(row).toHaveText(
-    /^atlas-bUnreachable since \d\d:\d\d: the API server stopped answering\. Showing data from (\d+ seconds|1 minute) ago: 15 workloads, 7 policies\.(\d+ s|1 min) ago$/,
+    /^atlas-bUnreachable since \d\d:\d\d: the API server stopped answering\. Showing data from (\d+ seconds|1 minute) ago: 18 workloads, 8 policies\.(\d+ s|1 min) ago$/,
     { timeout: 60_000 },
   );
 });

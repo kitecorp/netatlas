@@ -1,3 +1,4 @@
+import { trafficSourcesLabel } from '@/model/traffic-status';
 import type { ClusterSnapshot } from '@/model/types';
 import type { ClusterConfig } from './registry';
 import type { Store } from './store';
@@ -15,10 +16,24 @@ export function snapshotOf(store: Store, cluster: string): ClusterSnapshot | und
   return { name: config.name, ...rest };
 }
 
-/** What the frame shows on every page: the clusters by name, and how many of them answer now. */
-export function frameOf(store: Store | undefined): { names: string[]; reachable: number } {
+/** What the frame shows on every page. */
+export interface FrameData {
+  /** The clusters by name, in the registry's order. */
+  readonly names: string[];
+  /** How many of them answer now. */
+  readonly reachable: number;
+  /** How many of the Prometheus sources answer now (`Prometheus, 1 of 2`), and whether any does; null when no cluster names one. */
+  readonly trafficSources: { readonly label: string; readonly live: boolean } | null;
+}
+
+export function frameOf(store: Store | undefined): FrameData {
   const entries = [...(store?.clusters.values() ?? [])];
-  return { names: entries.map((e) => e.config.name), reachable: entries.filter((e) => e.status.state === 'reachable').length };
+  const label = store ? trafficSourcesLabel(snapshots(store)) : null;
+  return {
+    names: entries.map((e) => e.config.name),
+    reachable: entries.filter((e) => e.status.state === 'reachable').length,
+    trafficSources: label === null ? null : { label, live: entries.some((e) => e.traffic?.status.state === 'reachable') },
+  };
 }
 
 /** How a person gets a token for Apply on this cluster: on EKS the command names the cluster netatlas reads. */

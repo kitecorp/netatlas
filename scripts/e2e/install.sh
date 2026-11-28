@@ -34,10 +34,11 @@ data:
   ca.crt: {{index .data "ca.crt"}}
 ' | kubectl --context kind-atlas-a apply -f -
 
-# 3. The values, with atlas-b at its address on the kind network, which atlas-a's pods reach.
+# 3. The values, with atlas-b's API server and its Prometheus NodePort at atlas-b's address on the kind
+# network, which atlas-a's pods reach.
 ATLAS_B_IP=$(docker inspect -f '{{(index .NetworkSettings.Networks "kind").IPAddress}}' atlas-b-control-plane)
 mkdir -p "$GENERATED"
-sed "s|ATLAS_B_SERVER|https://$ATLAS_B_IP:6443|" e2e/values.template.yaml > "$GENERATED/values.yaml"
+sed -e "s|ATLAS_B_SERVER|https://$ATLAS_B_IP:6443|" -e "s|ATLAS_B_IP|$ATLAS_B_IP|g" e2e/values.template.yaml > "$GENERATED/values.yaml"
 
 # 4. The image, loaded into atlas-a, and the chart. The build annotation rolls the pod on every
 # install, so a rebuilt image with the same tag is the one that runs.

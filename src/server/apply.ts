@@ -1,7 +1,9 @@
 import { ApiException } from '@kubernetes/client-node';
 import { CANNOT_APPLY } from '@/model/format';
+import { isRecord } from '@/model/is-record';
 import type { NetworkPolicyObject, NetworkPolicySpec } from '@/model/types';
 import type { ClusterConfig } from './registry';
+import { TOKEN_CHARACTERS } from './secret-file';
 import { trimPolicy } from './sources/trim';
 import type { ClusterEntry } from './store';
 
@@ -33,8 +35,6 @@ export type ApplyResult = { status: 200; policy: NetworkPolicyObject } | ApplyRe
 const TYPE = { apiVersion: 'networking.k8s.io/v1', kind: 'NetworkPolicy' };
 /** aws-iam-authenticator refuses longer tokens, and no other Kubernetes token comes near it. */
 const LONGEST_TOKEN_BYTES = 16_384;
-/** What an Authorization header can carry; anything else would fail in the request, after the checks. */
-const TOKEN_CHARACTERS = /^[\x21-\x7e]+$/;
 
 const MALFORMED = 'The request needs a token, a resourceVersion and a spec.';
 const TOO_LONG = 'The token is longer than any Kubernetes token.';
@@ -43,8 +43,6 @@ const CHANGED = "The policy changed in the cluster after you opened it, so nothi
 const NOT_JSON = 'netatlas takes the policy as application/json.';
 /** Used when a refusal carries no Status message. */
 const REASONS: Record<number, string> = { 400: 'Bad Request', 403: 'Forbidden', 422: 'Unprocessable Entity' };
-
-const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
 /** Checks the whole body before anything is written. A pasted token keeps its trailing newline, so it is trimmed. */
 export function parseApplyRequest(body: unknown): ApplyRequest | { status: 400; message: string } {

@@ -3,10 +3,11 @@
 # no built page (docs/<name>.md is built as docs/<name>.html and the README as index.html, the first page), when a
 # built page's credit is not the README's "Made by" section, when a page shows a Mermaid block as code, when a page
 # lacks its description, canonical address or Open Graph names, when a page holds any script (the site publishes
-# none) or asks another host for something its own Markdown does not name, or when a link of a built page leads nowhere: a
-# link that stays on the site must lead to a file the build wrote, and with a fragment to an id that file holds, and
-# a link that leaves the site must be a well-formed http, https or mailto address. Links that leave are not fetched,
-# so the check needs no network and another site being down never fails it.
+# none) or asks another host for something its own Markdown does not name, or when a link of a built page leads
+# nowhere: a link or a picture that stays on the site, such as the README's pictures under docs/screenshots/, must lead
+# to a file the build wrote, a link with a fragment to an id that file holds, and a link that leaves the site must be a
+# well-formed http, https or mailto address. Links that leave are not fetched, so the check needs no network and
+# another site being down never fails it.
 set -euo pipefail
 if (($# != 1)) || [[ ! -d $1 ]]; then
   echo "usage: check-site.sh <folder of the built site>" >&2

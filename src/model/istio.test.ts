@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { authorizationPolicy, SHOP, withPolicies } from './fixtures/shop';
-import { evaluateAuthorizationPolicies, istioMatch } from './istio';
+import { authorizationPolicy, MESH_DENY_ADMIN, SHOP, withPolicies } from './fixtures/shop';
+import { evaluateAuthorizationPolicies, istioMatch, type IstioEdge } from './istio';
 import type { AuthorizationPolicyObject, AuthorizationPolicySpec, ClusterResources, Mesh, PolicyRef } from './types';
 
 const gateway = 'ingress/Deployment/gateway';
@@ -30,8 +30,15 @@ const changed = (name: string, change: (spec: AuthorizationPolicySpec) => Author
 
 const withCartMesh = (mesh: Mesh): ClusterResources => ({ ...SHOP, pods: SHOP.pods.map((p) => (p.workload.name === 'cart' ? { ...p, mesh } : p)) });
 
-const rows = (r: ClusterResources) =>
-  evaluateAuthorizationPolicies(r).edges.map((e) => [e.from, e.to, e.label, e.via.map((v) => v.name).join(','), e.depends ?? '', e.plainText ?? '']);
+/**
+ * The policies an edge names: the ALLOW policies that let the call in, then, after `unless`, the CUSTOM and DENY
+ * policies that may refuse some of its requests. Neither of those two allows anything, so neither is ever among
+ * the first (istio/api security/v1beta1/authorization_policy.proto:28-33 at 97748e4).
+ */
+const policiesOf = (e: IstioEdge) =>
+  [e.via.map((v) => v.name).join(','), ...(e.mayRefuse?.length ? [`unless ${e.mayRefuse.map((v) => v.name).join(',')}`] : [])].filter(Boolean).join(' ');
+
+const rows = (r: ClusterResources) => evaluateAuthorizationPolicies(r).edges.map((e) => [e.from, e.to, e.label, policiesOf(e), e.depends ?? '', e.plainText ?? '']);
 
 const SHOP_EDGES = [
   [cart, api, 'POST /pay', 'api-callers', '', ''],
@@ -128,7 +135,7 @@ describe('istioMatch', () => {
 });
 
 describe('a call that depends on the request', () => {
-  // The policies that may decide against a request are named beside the ALLOW policy that lets it in.
+  // The policies that may decide against a request are named apart from the ALLOW policy that lets it in: they allow nothing.
   it.each<[string, ClusterResources, string]>([
     [
       'a when condition on the ALLOW rule',
@@ -141,31 +148,33 @@ describe('a call that depends on the request', () => {
     [
       'a CUSTOM policy, which an external service decides',
       withPolicies(SHOP, authorizationPolicy('shop', 'cart-ext-authz', { selector: onCart, action: 'CUSTOM', provider: { name: 'ext-authz' }, rules: [{ to: [{ operation: { paths: ['/cart'] } }] }] })),
-      'cart-callers,cart-ext-authz',
+      'cart-callers unless cart-ext-authz',
     ],
     [
       'a DENY that needs the request',
       withPolicies(SHOP, authorizationPolicy('shop', 'cart-deny-header', { selector: onCart, action: 'DENY', rules: [{ when: [{ key: 'request.headers[x-blocked]', values: ['1'] }] }] })),
-      'cart-callers,cart-deny-header',
+      'cart-callers unless cart-deny-header',
     ],
     // Istio denies only the requests a DENY rule's operation matches, so the caller's other requests still get in.
     [
       'a DENY of one method',
       withPolicies(SHOP, authorizationPolicy('shop', 'cart-deny-delete', { selector: onCart, action: 'DENY', rules: [{ to: [{ operation: { methods: ['DELETE'] } }] }] })),
-      'cart-callers,cart-deny-delete',
+      'cart-callers unless cart-deny-delete',
     ],
     [
       'a DENY of the admin paths',
       withPolicies(SHOP, authorizationPolicy('shop', 'cart-deny-admin', { selector: onCart, action: 'DENY', rules: [{ to: [{ operation: { paths: ['/admin*'] } }] }] })),
-      'cart-callers,cart-deny-admin',
+      'cart-callers unless cart-deny-admin',
     ],
     [
       'a DENY of one port, which netatlas shows but does not check',
       withPolicies(SHOP, authorizationPolicy('shop', 'cart-deny-port', { selector: onCart, action: 'DENY', rules: [{ to: [{ operation: { ports: ['9090'] } }] }] })),
-      'cart-callers,cart-deny-port',
+      'cart-callers unless cart-deny-port',
     ],
-  ])('depends %#: %s', (_name, r, via) => {
-    expect(rows(r).filter(([from, to]) => from === frontend && to === cart)).toEqual([[frontend, cart, 'GET /cart', via, DEPENDS, '']]);
+    // A common hardening: one DENY policy for the whole mesh. It must not be named beside every ALLOW policy as if it allowed the call too.
+    ['a DENY in the root namespace, for every workload in the mesh, that keeps frontend from the admin paths', withPolicies(SHOP, MESH_DENY_ADMIN), 'cart-callers unless mesh-deny-admin'],
+  ])('depends %#: %s', (_name, r, policies) => {
+    expect(rows(r).filter(([from, to]) => from === frontend && to === cart)).toEqual([[frontend, cart, 'GET /cart', policies, DEPENDS, '']]);
   });
 
   describe('with no ALLOW policy, the CUSTOM and DENY policies that may match a caller make its call depend on the request', () => {
@@ -183,30 +192,30 @@ describe('a call that depends on the request', () => {
         'a CUSTOM policy for every request reaches every caller, plain text too',
         [customFor([{}])],
         [
-          [gateway, postgres, 'any request', 'postgres-ext-authz', DEPENDS, PLAIN],
-          [coredns, postgres, 'any request', 'postgres-ext-authz', DEPENDS, PLAIN],
-          [api, postgres, 'any request', 'postgres-ext-authz', DEPENDS, ''],
-          [cart, postgres, 'any request', 'postgres-ext-authz', DEPENDS, ''],
-          [frontend, postgres, 'any request', 'postgres-ext-authz', DEPENDS, ''],
-          [recommender, postgres, 'any request', 'postgres-ext-authz', DEPENDS, ''],
+          [gateway, postgres, 'any request', 'unless postgres-ext-authz', DEPENDS, PLAIN],
+          [coredns, postgres, 'any request', 'unless postgres-ext-authz', DEPENDS, PLAIN],
+          [api, postgres, 'any request', 'unless postgres-ext-authz', DEPENDS, ''],
+          [cart, postgres, 'any request', 'unless postgres-ext-authz', DEPENDS, ''],
+          [frontend, postgres, 'any request', 'unless postgres-ext-authz', DEPENDS, ''],
+          [recommender, postgres, 'any request', 'unless postgres-ext-authz', DEPENDS, ''],
         ],
       ],
       [
         'a CUSTOM policy for one caller and a DENY for another namespace name only the one that matches',
         [customFor([{ from: [{ source: { principals: ['cluster.local/ns/payments/sa/api'] } }] }]), quarantine],
-        [[api, postgres, 'any request', 'postgres-ext-authz', DEPENDS, '']],
+        [[api, postgres, 'any request', 'unless postgres-ext-authz', DEPENDS, '']],
       ],
       [
         'a DENY that needs the request names itself, beside the CUSTOM policy where both match',
         [customFor([{ from: [{ source: { principals: ['cluster.local/ns/payments/sa/api'] } }] }]), header],
         [
-          [api, postgres, 'any request', 'postgres-deny-header,postgres-ext-authz', DEPENDS, ''],
-          [cart, postgres, 'any request', 'postgres-deny-header', DEPENDS, ''],
-          [frontend, postgres, 'any request', 'postgres-deny-header', DEPENDS, ''],
-          [recommender, postgres, 'any request', 'postgres-deny-header', DEPENDS, ''],
+          [api, postgres, 'any request', 'unless postgres-deny-header,postgres-ext-authz', DEPENDS, ''],
+          [cart, postgres, 'any request', 'unless postgres-deny-header', DEPENDS, ''],
+          [frontend, postgres, 'any request', 'unless postgres-deny-header', DEPENDS, ''],
+          [recommender, postgres, 'any request', 'unless postgres-deny-header', DEPENDS, ''],
         ],
       ],
-    ])('via %#: %s', (_name, ps, expected) => {
+    ])('may refuse %#: %s', (_name, ps, expected) => {
       expect(rows(withPolicies(SHOP, ...ps)).filter(([, to]) => to === postgres)).toEqual(expected);
     });
   });
@@ -365,9 +374,31 @@ describe('an ambient destination applies only the attributes ztunnel can read', 
     [
       'a DENY rule with a port and a method in one entry denies that port, which netatlas does not check',
       [allowFrontend, deny('cart-deny-port', [{ to: [{ operation: { ports: ['8080'], methods: ['DELETE'] } }] }])],
-      [[frontend, cart, 'any request', 'cart-callers,cart-deny-port', DEPENDS, '']],
+      [[frontend, cart, 'any request', 'cart-callers unless cart-deny-port', DEPENDS, '']],
     ],
   ])('ambient %#: %s', (_name, ps, expected) => {
     expect(ambient(...ps)).toEqual(expected);
   });
+});
+
+// cart's first pod is the canary, its other two stable, each under its own ALLOW policy: frontend may call
+// the stable pods only and api the canary only, so neither pair is refused as a whole. The callers neither
+// admits are refused by every pod, and are listed.
+it('lists a pair as refused only when Istio refuses it on every pod of the callee', () => {
+  const canary = 'cart-6d5f7c9b8-4xkqz';
+  const twoTracks: ClusterResources = withPolicies(
+    { ...SHOP, pods: SHOP.pods.map((p) => (p.workload.name === 'cart' ? { ...p, labels: { ...p.labels, track: p.name === canary ? 'canary' : 'stable' } } : p)) },
+    changed('cart-callers', (spec) => ({ ...spec, selector: { matchLabels: { app: 'cart', track: 'stable' } } })),
+    authorizationPolicy('shop', 'cart-canary-callers', {
+      selector: { matchLabels: { app: 'cart', track: 'canary' } },
+      action: 'ALLOW',
+      rules: [{ from: [{ source: { principals: ['cluster.local/ns/payments/sa/api'] } }] }],
+    }),
+  );
+  expect(evaluateAuthorizationPolicies(twoTracks).denied.filter((p) => p.to === cart)).toStrictEqual([
+    { from: gateway, to: cart },
+    { from: coredns, to: cart },
+    { from: postgres, to: cart },
+    { from: recommender, to: cart },
+  ]);
 });

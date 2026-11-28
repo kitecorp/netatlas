@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { podClasses } from './classes';
 import { SHOP } from './fixtures/shop';
-import { ALL, EACH_DESTINATION, formatPorts, intersect, NONE, portsOfRule, union, type PortSet } from './ports';
-import type { PolicyPort } from './types';
+import { admits, ALL, EACH_DESTINATION, formatPorts, intersect, NONE, portsOfRule, union, type PortSet } from './ports';
+import type { PolicyPort, Protocol } from './types';
 
 // A function, so that a failure to build the class shows on each test rather than on loading the file.
 const cart = () => podClasses(SHOP.pods.filter((p) => p.workload.name === 'cart'))[0];
@@ -59,5 +59,18 @@ describe('port sets', () => {
     ['every port of every protocol is every port', [{ protocol: 'TCP', from: 1, to: 65535 }, { protocol: 'UDP', from: 1, to: 65535 }], [{ protocol: 'SCTP', from: 1, to: 65535 }], 'all'],
   ])('union %#: %s', (_name, a, b, expected) => {
     expect(union(a, b)).toEqual(expected);
+  });
+
+  // istiod serves its sidecars on TCP 15012, which the mesh check asks each egress side for.
+  it.each<[string, PortSet, Protocol, boolean]>([
+    ['every port admits it', ALL, 'TCP', true],
+    ['a range around it admits it', portsOfRule([{ port: 15000, endPort: 15020 }], undefined), 'TCP', true],
+    ['the same range on another protocol does not', portsOfRule([{ port: 15000, endPort: 15020 }], undefined), 'UDP', false],
+    ['a range that starts above it does not', portsOfRule([{ port: 15013, endPort: 15020 }], undefined), 'TCP', false],
+    ['a port below it does not', [{ protocol: 'TCP', from: 8080, to: 8080 }], 'TCP', false],
+    ['no port does not', NONE, 'TCP', false],
+    ['a port name never does, as only a pod resolves it', [{ protocol: 'TCP', name: 'grpc-xds' }], 'TCP', false],
+  ])('admits 15012 %#: %s', (_name, set, protocol, expected) => {
+    expect(admits(set, 15012, protocol)).toBe(expected);
   });
 });

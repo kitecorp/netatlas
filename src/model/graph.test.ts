@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { authorizationPolicy, networkPolicy, SHOP, withPolicies } from './fixtures/shop';
+import { authorizationPolicy, MESH_DENY_ADMIN, networkPolicy, RECOMMENDER_DENY, SHOP, WITH_ISTIOD, withPolicies } from './fixtures/shop';
 import { clusterGraph, defaultHidden, workloadDetail } from './graph';
-import type { ClusterResources, PolicyRef } from './types';
+import type { ClusterResources, Mesh, PolicyRef } from './types';
 
 const gateway = 'ingress/Deployment/gateway';
 const frontend = 'shop/Deployment/frontend';
@@ -62,6 +62,8 @@ it('groups the workloads by namespace, and marks what no policy restricts', () =
       istioNotEnforced: false,
       istioEnforced: [ap('shop', 'cart-callers')],
       anyPeer: [],
+      meshEgress: [],
+      mesh: 'sidecar',
     },
     {
       id: recommender,
@@ -77,6 +79,8 @@ it('groups the workloads by namespace, and marks what no policy restricts', () =
       istioNotEnforced: false,
       istioEnforced: [],
       anyPeer: [],
+      meshEgress: [],
+      mesh: 'sidecar',
     },
     {
       id: postgres,
@@ -92,8 +96,19 @@ it('groups the workloads by namespace, and marks what no policy restricts', () =
       istioNotEnforced: false,
       istioEnforced: [],
       anyPeer: [],
+      meshEgress: [],
+      mesh: 'sidecar',
     },
   ]);
+});
+
+// The gateway and coredns run no proxy in SHOP: only the shop's and the payments' pods are injected.
+it.each<[string, Mesh]>([
+  [frontend, 'sidecar'],
+  [gateway, 'none'],
+  ['kube-system/Deployment/coredns', 'none'],
+])('gives %s the mesh %s', (id, expected) => {
+  expect(clusterGraph(SHOP).namespaces.flatMap((n) => n.workloads).find((w) => w.id === id)?.mesh).toBe(expected);
 });
 
 describe('marks on a workload', () => {
@@ -117,6 +132,8 @@ describe('marks on a workload', () => {
       { ...SHOP, authorizationPolicies: [], readErrors: [{ kind: 'authorizationpolicies', reason: 'forbidden' }] },
       { ingressOpen: true, egressOpen: true, noPolicy: false, istioNotEnforced: false, anyPeer: [] },
     ],
+    // A DENY policy allows nothing, yet it selects the workload, so the workload is not one no policy selects.
+    ['a DENY policy alone still selects it, so it has a policy', withPolicies(SHOP, RECOMMENDER_DENY), { ingressOpen: true, egressOpen: true, noPolicy: false, istioNotEnforced: false, anyPeer: [] }],
   ])('mark %#: %s', (_name, r, expected) => {
     expect(recommenderNode(r)).toStrictEqual(expected);
   });
@@ -159,6 +176,30 @@ it('details cart: what selects it, what may call it and what it may call', () =>
       { peer: 'kube-system / coredns', label: 'UDP 53, TCP 53', kind: 'networkpolicy', note: 'hidden on the map' },
     ],
     summary: 'Everything else is blocked in both directions, because cart-allow covers ingress and egress. Istio also decides which requests reach it: cart-callers.',
+    needs: [],
+  });
+});
+
+// recommender's only Istio policy is a DENY, and the mesh-wide DENY keeps frontend from the admin paths. No ALLOW
+// policy selects recommender or postgres, so Istio lets in every request no DENY policy refuses (istio/api
+// security/v1beta1/authorization_policy.proto:31 at 97748e4): the callers stay, and a DENY policy is named only as
+// not refusing the call, never as the policy that lets it in. cart's ALLOW policy is the one named for cart.
+it('details calls no ALLOW policy decides: the callers stay, and a DENY policy is never named as what lets them in', () => {
+  const g = clusterGraph(withPolicies(SHOP, RECOMMENDER_DENY, MESH_DENY_ADMIN));
+  expect({ callersOfRecommender: workloadDetail(g, recommender, new Set())?.mayCallIt.map((l) => l.peer), frontendMayCall: workloadDetail(g, frontend, new Set())?.itMayCall }).toStrictEqual({
+    callersOfRecommender: ['ingress / gateway', 'kube-system / coredns', 'payments / api', 'payments / postgres', 'shop / cart', 'shop / frontend'],
+    frontendMayCall: [
+      { peer: 'kube-system / coredns', label: 'UDP 53, TCP 53', kind: 'networkpolicy' },
+      { peer: 'payments / postgres', label: 'any request', kind: 'istio', note: 'no ALLOW policy selects it, so Istio lets in every request that mesh-deny-admin does not refuse; depends on the request' },
+      { peer: 'shop / cart', label: 'TCP 8080', kind: 'networkpolicy' },
+      { peer: 'shop / cart', label: 'GET /cart', kind: 'istio', note: 'its policy cart-callers; depends on the request' },
+      {
+        peer: 'shop / recommender',
+        label: 'any request',
+        kind: 'istio',
+        note: 'no ALLOW policy selects it, so Istio lets in every request that mesh-deny-admin and recommender-deny do not refuse; depends on the request',
+      },
+    ],
   });
 });
 
@@ -175,6 +216,12 @@ it('marks a plain-text caller and a rule with no peers in the detail', () => {
     { peer: 'kube-system / coredns', label: 'GET', kind: 'istio', note: 'accepted unless mutual TLS is STRICT' },
   ]);
   expect(lines?.at(-1)).toStrictEqual({ peer: 'Anything, in this cluster or outside it', label: 'TCP 8080', kind: 'networkpolicy' });
+});
+
+it('details what keeps frontend from istiod, as a sentence', () => {
+  expect(workloadDetail(clusterGraph(WITH_ISTIOD), frontend, new Set())?.needs).toStrictEqual([
+    'Cannot reach istiod on TCP 15012 (frontend-allow). New pods do not become ready while these policies apply: their sidecar waits for configuration from istiod.',
+  ]);
 });
 
 it('answers undefined for a workload the graph does not have', () => {

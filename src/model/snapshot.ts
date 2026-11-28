@@ -12,6 +12,9 @@ export interface ResourcesInput {
   readonly authorizationPolicies: ClusterResources['authorizationPolicies'];
   readonly readErrors: ClusterResources['readErrors'];
   readonly istioSettings: ClusterResources['istioSettings'];
+  readonly serviceEntries: ClusterResources['serviceEntries'];
+  readonly sidecars: ClusterResources['sidecars'];
+  readonly meshConfig: ClusterResources['meshConfig'];
 }
 
 const FINISHED = new Set(['Succeeded', 'Failed']);
@@ -31,5 +34,8 @@ export function buildResources(input: ResourcesInput): ClusterResources {
     enforcer: detectEnforcer(input.daemonSets),
     istio: detectIstio(input.daemonSets, input.pods),
     istioSettings: input.istioSettings,
+    serviceEntries: input.serviceEntries,
+    sidecars: input.sidecars,
+    meshConfig: input.meshConfig,
   };
 }

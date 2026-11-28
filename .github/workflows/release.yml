@@ -81,3 +81,21 @@ jobs:
           helm package charts/netatlas --destination dist
           printf '%s' "$TOKEN" | helm registry login ghcr.io --username "$ACTOR" --password-stdin
           helm push "dist/netatlas-$VERSION.tgz" oci://ghcr.io/kitecorp/charts
+
+  # The GitHub Release for the tag, with notes GitHub writes from the merged pull requests. A job of its own,
+  # so that a failure here cannot stop the image and the chart, which the job above has already published.
+  github-release:
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      # --verify-tag refuses a tag that is not on GitHub, rather than creating one from the default branch.
+      - name: Create the GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: gh release create "$TAG" --verify-tag --generate-notes

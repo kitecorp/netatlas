@@ -95,12 +95,19 @@ a:hover { color: var(--link-hover); }
 .table th { text-align: left; color: var(--muted); font-size: 12px; font-weight: 600; padding: 10px 12px; border-bottom: 1px solid var(--line); }
 .table td { padding: 10px 12px; border-bottom: 1px solid var(--line); }
 .table tbody { font-variant-numeric: tabular-nums; }
-.table tr:last-child td { border-bottom: none; }
+/* Only the body's last row loses its line: the head is a last row too, and keeps the line under the column names. */
+.table tr:last-child td, .table tbody tr:last-child th { border-bottom: none; }
+/* A row's header, the cell that names it, reads as the row's other cells do. */
+.table th[scope='row'] { color: inherit; font-size: inherit; font-weight: inherit; }
 .table th:first-child, .table td:first-child { padding-left: 16px; }
 .table th:last-child, .table td:last-child { padding-right: 16px; }
 .table .num { text-align: right; }
 .table td.name { padding-top: 0; padding-bottom: 0; }
-.table td.name a { display: flex; align-items: center; min-height: 44px; font-family: var(--mono); font-size: 13px; }
+/* A cluster's name stays on one line: broken at its hyphen, atlas-b reads as two words. A long name widens
+   the table, which then scrolls sideways in its box. */
+.table td.name a { display: flex; align-items: center; min-height: 44px; font-family: var(--mono); font-size: 13px; white-space: nowrap; }
+/* An age stays on one line too: `10 s ago` broken after its number reads as two cells. */
+.table td.age { white-space: nowrap; }
 .table tr.row-down { background: var(--open-bg); }
 .table tr.row-down td, .table tr.row-down a { color: var(--open); }
 .side-title { margin: 0; font-family: var(--display); font-size: 20px; line-height: 28px; font-weight: 600; }
@@ -134,13 +141,26 @@ fieldset.picker-menu { display: flex; flex-direction: column; gap: 2px; padding:
 .legend-open { fill: none; stroke: var(--open); stroke-width: 1.5; stroke-dasharray: 3 3; }
 .line-text-networkpolicy { color: var(--link-hover); }
 .line-text-istio { color: var(--warn); }
-.map-box { overflow: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--bg-deep); }
-.map-box .react-flow { --xy-background-color: var(--bg-deep); background: var(--bg-deep); }
-/* React Flow's pane takes every touch (touch-action: none in @xyflow/react/dist/style.css), which stops a
-   phone from scrolling the box; the map takes no gestures of its own, so the browser may pan it. */
-.map-box .react-flow__pane { touch-action: pan-x pan-y; }
+/* The map is scaled to fit its box, so the box never scrolls; the person zooms and pans inside it. */
+.map-box { overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: var(--bg-deep); }
+.map-box .react-flow {
+  --xy-background-color: var(--bg-deep);
+  --xy-controls-button-background-color: var(--raised);
+  --xy-controls-button-background-color-hover: var(--selected);
+  --xy-controls-button-color: var(--text);
+  --xy-controls-button-color-hover: var(--text);
+  --xy-controls-button-border-color: var(--line);
+  background: var(--bg-deep);
+}
+.map-box .react-flow__controls-button { width: 32px; height: 32px; }
+/* React Flow's pane takes every touch (touch-action: none in @xyflow/react/dist/style.css), which would
+   stop a phone from scrolling the page over the map. Up and down scroll the page; a sideways drag or a
+   pinch moves the map. */
+.map-box .react-flow__pane { touch-action: pan-y; }
 .map-namespace { width: 100%; height: 100%; border: 1px solid var(--line-soft); border-radius: 12px; background: var(--card); }
-.map-namespace-label { position: absolute; left: 16px; top: 12px; font-family: var(--mono); font-size: 12px; line-height: 16px; color: var(--muted); }
+/* A title is a node of its own above the lines, placed and given its line height from NAMESPACE_TITLE
+   (src/model/map-text.ts); it is set on its box's background, which covers exactly its text. */
+.map-namespace-label { display: block; width: max-content; white-space: nowrap; font-family: var(--mono); font-size: 12px; color: var(--muted); background: var(--card); }
 .map-node { width: 100%; height: 100%; padding: 6px 8px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; border-radius: 10px; background: var(--raised); border: 1px solid var(--line-strong); color: var(--text); text-decoration: none; font-size: 14px; line-height: 18px; }
 a.map-node:hover { color: var(--text); border-color: var(--link); }
 .map-node-sub, .map-node-mark { font-size: 12px; line-height: 16px; color: var(--muted); }
@@ -157,6 +177,37 @@ a.map-node:hover { color: var(--text); border-color: var(--link); }
 .map-edge-networkpolicy .react-flow__edge-text { fill: var(--link-hover); font-family: var(--mono); font-size: 12px; }
 .map-edge-istio .react-flow__edge-text { fill: var(--warn); font-family: var(--mono); font-size: 12px; }
 .map-legend { display: flex; flex-wrap: wrap; gap: 8px 24px; color: var(--muted); font-size: 13px; }
+
+/* The traffic view. A traffic edge's colour and dashes come from its mark (components/traffic/look.ts). */
+.toolbar-lead { margin: 0; }
+.toolbar-text { display: flex; align-items: center; height: 44px; padding: 0 6px; color: var(--muted); }
+.toggle-compare[aria-pressed='true'] { border-color: var(--text); background: #1e2d47; color: var(--text); }
+.line-traffic { fill: none; stroke-width: 2; stroke-linecap: round; }
+.map-edge-traffic path.react-flow__edge-path { stroke-width: 2; }
+.map-edge-traffic .react-flow__edge-text { font-family: var(--mono); font-size: 12px; }
+.stands-out-item { display: flex; flex-direction: column; gap: 2px; }
+.stands-out-reason, .stands-out-note { font-size: 13px; color: var(--muted); }
+.stands-out-note { margin: 0; }
+
+/* The Outbound view: a cell lists its workloads one under another, each with its verdicts or its figure. */
+.outbound-lead { margin: 0; }
+.outbound-table td, .outbound-table th[scope='row'] { vertical-align: top; }
+/* May call takes what the others leave: its verdicts are the longest lines. */
+.outbound-table .col-destination { width: 24%; }
+.outbound-table .col-ports { width: 10%; }
+.outbound-table .col-do { width: 22%; }
+.th-note { display: block; font-weight: 400; }
+.destination { min-width: 0; overflow-wrap: anywhere; }
+.cell-lines { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 10px; }
+.cell-may { display: flex; flex-direction: column; gap: 2px; }
+.cell-more { font-size: 13px; line-height: 18px; color: var(--muted); }
+.cell-verdicts { display: flex; flex-direction: column; margin-top: 2px; font-size: 13px; line-height: 18px; }
+.cell-call { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 16px; }
+.cell-note { display: block; margin: 6px 0 0; font-size: 13px; line-height: 18px; color: var(--muted); }
+
+/* The side panel of the map's Internet node. A destination wraps beside its figure, which stays on one line. */
+.internet-list li span:last-child { flex: none; white-space: nowrap; }
+.internet-link { align-self: flex-start; }
 
 /* The side panel of one workload. */
 .panel-head { display: flex; flex-direction: column; gap: 4px; }

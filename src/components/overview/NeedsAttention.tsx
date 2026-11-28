@@ -1,6 +1,10 @@
 import type { Attention } from '@/model/overview';
 
-const TONES: Readonly<Record<string, string>> = { 'Policies not enforced': 'notice notice-warn', 'Open workloads': 'notice notice-open' };
+const TONES: Readonly<Record<string, string>> = {
+  'Policies not enforced': 'notice notice-warn',
+  'Open workloads': 'notice notice-open',
+  'Egress the mesh needs': 'notice notice-warn',
+};
 
 /** needsAttention's items under their titles, one line each. */
 export function NeedsAttention({ items }: { items: readonly Attention[] }) {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { podClasses, type PodClass } from './classes';
 import { networkPolicy, SHOP, withPolicies } from './fixtures/shop';
-import { evaluateNetworkPolicies, type AnyPeerRule } from './netpol';
+import { evaluateNetworkPolicies, netpolEvaluator, type AddressRule, type AnyPeerRule } from './netpol';
 import { formatPorts } from './ports';
 import type { ClusterResources, NetworkPolicyObject, NetworkPolicySpec, PolicyRef } from './types';
 
@@ -157,4 +158,58 @@ describe('ipBlock peers', () => {
   ])('ipBlock %#: %s', (_name, p, expected) => {
     expect(rows(withPolicies(SHOP, p)).filter(([from, to]) => from === 'outside' || to === 'outside')).toEqual(expected);
   });
+});
+
+/** The one class of a SHOP workload among `classes`, which has one, as every SHOP workload does. */
+const classOf = (classes: readonly PodClass[], workload: string) => {
+  const c = classes.find((x) => x.workloadId === workload);
+  if (!c) throw new Error(`no class of ${workload}`);
+  return c;
+};
+
+// It answers for any pair, edge or not: two open sides draw no edge, yet allow every port.
+it.each<[string, string, string]>([
+  [frontend, cart, 'TCP 8080'],
+  [recommender, postgres, 'TCP 5432'],
+  [frontend, recommender, ''],
+  [postgres, recommender, 'every port'],
+])('between %s and %s gives what both sides allow', (from, to, expected) => {
+  const e = netpolEvaluator(SHOP);
+  expect(formatPorts(e.between(classOf(e.classes, from), classOf(e.classes, to)))).toBe(expected);
+});
+
+// A caller may build its own classes: an equal class must read as the evaluator's own, never as open.
+it('answers for an equal class from another podClasses call as for its own', () => {
+  const e = netpolEvaluator(SHOP), other = podClasses(SHOP.pods);
+  const verdict = (classes: readonly PodClass[]) => {
+    const [from, to] = [classOf(classes, frontend), classOf(classes, recommender)];
+    return [e.egress(from, to).restrictedBy.map((p) => p.name), formatPorts(e.between(from, to))];
+  };
+  expect([verdict(e.classes), verdict(other)]).toStrictEqual([
+    [['frontend-allow'], ''],
+    [['frontend-allow'], ''],
+  ]);
+});
+
+const withEgress = (name: string, rule: NetworkPolicySpec['egress']) => changed(name, (spec) => ({ ...spec, egress: [...(spec.egress ?? []), ...(rule ?? [])] }));
+
+// Only an ipBlock peer or a rule with no peers reaches an address; a pod peer reaches pods alone.
+it.each<[string, ClusterResources, string, 'any' | AddressRule[]]>([
+  ['no policy restricts its egress, so any address', SHOP, recommender, 'any'],
+  ['rules that name pods reach no address', SHOP, frontend, []],
+  [
+    'an ipBlock peer gives its block, its ports and its policy',
+    withPolicies(SHOP, withEgress('api-allow', [{ to: [{ ipBlock: { cidr: '203.0.113.0/24' } }], ports: [{ port: 443 }] }])),
+    api,
+    [{ block: { cidr: '203.0.113.0/24' }, ports: [{ protocol: 'TCP', from: 443, to: 443 }], via: ref('payments', 'api-allow') }],
+  ],
+  [
+    'a rule with no peers reaches any address, so its block is null',
+    withPolicies(SHOP, withEgress('cart-allow', [{ ports: [{ port: 443 }] }])),
+    cart,
+    [{ block: null, ports: [{ protocol: 'TCP', from: 443, to: 443 }], via: ref('shop', 'cart-allow') }],
+  ],
+])('addresses %#: %s', (_name, r, workload, expected) => {
+  const e = netpolEvaluator(r);
+  expect(e.addresses(classOf(e.classes, workload))).toStrictEqual(expected);
 });

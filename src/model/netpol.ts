@@ -27,11 +27,122 @@ export interface NetpolResult {
   readonly anyPeer: readonly AnyPeerRule[];
 }
 
+/** What one side of a call lets through. `restrictedBy` empty: no policy restricts the side, so `ports` is ALL. */
+export interface SideVerdict {
+  readonly restrictedBy: readonly PolicyRef[];
+  readonly ports: PortSet;
+  readonly via: readonly PolicyRef[];
+}
+
+/** An egress rule's address block and the ports it opens to it; `block` null is a rule with no peers, which reaches any address. */
+export interface AddressRule {
+  readonly block: IPBlock | null;
+  readonly ports: PortSet;
+  readonly via: PolicyRef;
+}
+
+/** The NetworkPolicy evaluation of one cluster, asked one pair of classes at a time. */
+export interface NetpolEvaluator {
+  readonly classes: readonly PodClass[];
+  /** What a's egress lets through to b; named ports resolve on b. */
+  egress(a: PodClass, b: PodClass): SideVerdict;
+  /** What b's ingress lets in from a; named ports resolve on b. */
+  ingress(b: PodClass, a: PodClass): SideVerdict;
+  /** The ports a may call b on: what both sides let through, whether or not the map draws an edge. */
+  between(a: PodClass, b: PodClass): PortSet;
+  /** The address rules of a's egress; 'any' when no policy restricts it. */
+  addresses(a: PodClass): 'any' | readonly AddressRule[];
+}
+
 type Side = 'ingress' | 'egress';
 
-const push = <K, V>(m: Map<K, V[]>, k: K, v: V) => m.set(k, [...(m.get(k) ?? []), v]);
+const SIDES: readonly Side[] = ['ingress', 'egress'];
 
-const cidrText = (b: IPBlock) => (b.except?.length ? `${b.cidr} except ${b.except.join(', ')}` : b.cidr);
+/** A class and the policies that restrict one of its sides. */
+interface Restricted {
+  readonly self: PodClass;
+  readonly policies: readonly NetworkPolicyObject[];
+}
+
+/**
+ * The policies that restrict each side of each class, and whether a peer selects a class. Classes are
+ * found by id, and podClasses numbers a workload's classes in the order its pods come. So a class reads
+ * the same whether it is one of the evaluator's own `classes` or comes from podClasses of the same
+ * `r.pods`, in the same order; a class built from other pods, or the same pods reordered, may not.
+ */
+interface PolicyIndex {
+  readonly classes: readonly PodClass[];
+  readonly of: Readonly<Record<Side, ReadonlyMap<string, Restricted>>>;
+  readonly selects: (peer: Peer, policyNs: string, c: PodClass) => boolean;
+}
+
+const OPEN: SideVerdict = { restrictedBy: [], ports: ALL, via: [] };
+
+const add = (m: Map<string, Restricted>, self: PodClass, p: NetworkPolicyObject) => m.set(self.id, { self, policies: [...(m.get(self.id)?.policies ?? []), p] });
+
+const peersOf = (dir: Side, rule: PolicyRule) => (dir === 'ingress' ? rule.from : rule.to) ?? [];
+
+function indexPolicies(r: ClusterResources): PolicyIndex {
+  const nsLabels = new Map(r.namespaces.map((n) => [n.name, n.labels]));
+  const classes = podClasses(r.pods);
+  const of = { ingress: new Map<string, Restricted>(), egress: new Map<string, Restricted>() };
+  for (const p of r.networkPolicies) {
+    const types = policyTypesOf(p.spec);
+    for (const c of classes) {
+      if (c.namespace !== p.metadata.namespace || !matchesSelector(p.spec.podSelector, c.labels)) continue;
+      if (types.includes('Ingress')) add(of.ingress, c, p);
+      if (types.includes('Egress')) add(of.egress, c, p);
+    }
+  }
+  // A peer without namespaceSelector means the policy's own namespace; an ipBlock never selects a pod here.
+  const selects = (peer: Peer, policyNs: string, c: PodClass) =>
+    !peer.ipBlock &&
+    (peer.namespaceSelector ? matchesSelector(peer.namespaceSelector, nsLabels.get(c.namespace) ?? {}) : c.namespace === policyNs) &&
+    (peer.podSelector ? matchesSelector(peer.podSelector, c.labels) : true);
+  return { classes, of, selects };
+}
+
+function evaluatorOf({ classes, of, selects }: PolicyIndex): NetpolEvaluator {
+  // What one side lets through between self and other, with named ports resolved on dst.
+  const side = (dir: Side, self: PodClass, other: PodClass, dst: PodClass): SideVerdict => {
+    const ps = of[dir].get(self.id)?.policies;
+    if (!ps) return OPEN;
+    let ports = NONE;
+    const via: PolicyRef[] = [];
+    for (const p of ps) for (const rule of p.spec[dir] ?? []) {
+      const peers = peersOf(dir, rule);
+      // A rule with no peers, or an empty list of them, matches every peer.
+      if (peers.length && !peers.some((x) => selects(x, p.metadata.namespace, other))) continue;
+      ports = union(ports, portsOfRule(rule.ports, dst));
+      via.push(refOf(p));
+    }
+    return { restrictedBy: uniqueRefs(ps.map(refOf)), ports, via: uniqueRefs(via) };
+  };
+  const egress = (a: PodClass, b: PodClass) => side('egress', a, b, b);
+  const ingress = (b: PodClass, a: PodClass) => side('ingress', b, a, b);
+  // An address has no container ports to resolve a name on, so a rule left with no port admits no
+  // address and is not listed.
+  const addresses = (a: PodClass): 'any' | AddressRule[] => {
+    const ps = of.egress.get(a.id)?.policies;
+    if (!ps) return 'any';
+    return ps.flatMap((p) =>
+      (p.spec.egress ?? []).flatMap((rule): AddressRule[] => {
+        const ports = portsOfRule(rule.ports, undefined), via = refOf(p), peers = peersOf('egress', rule);
+        if (isEmpty(ports)) return [];
+        if (!peers.length) return [{ block: null, ports, via }];
+        return peers.flatMap((peer) => (peer.ipBlock ? [{ block: peer.ipBlock, ports, via }] : []));
+      }),
+    );
+  };
+  return { classes, egress, ingress, between: (a, b) => intersect(egress(a, b).ports, ingress(b, a).ports), addresses };
+}
+
+export function netpolEvaluator(r: ClusterResources): NetpolEvaluator {
+  return evaluatorOf(indexPolicies(r));
+}
+
+/** `203.0.113.0/24 except 203.0.113.128/25`: an address block as the map and the Outbound view name it. */
+export const cidrText = (b: IPBlock): string => (b.except?.length ? `${b.cidr} except ${b.except.join(', ')}` : b.cidr);
 
 /** Ordered pairs of classes, each once. */
 class PairSet<T extends { readonly id: string }> implements Iterable<readonly [T, T]> {
@@ -56,41 +167,10 @@ export function policyTypesOf(spec: NetworkPolicySpec): readonly ('Ingress' | 'E
 
 /** NetworkPolicy as Kubernetes defines it: a call is allowed when the caller may call out to the callee and the callee may be called by the caller. */
 export function evaluateNetworkPolicies(r: ClusterResources): NetpolResult {
-  const nsLabels = new Map(r.namespaces.map((n) => [n.name, n.labels]));
-  const classes = podClasses(r.pods);
-  const ingressOf = new Map<PodClass, NetworkPolicyObject[]>(), egressOf = new Map<PodClass, NetworkPolicyObject[]>();
-  for (const p of r.networkPolicies) {
-    const types = policyTypesOf(p.spec);
-    for (const c of classes) {
-      if (c.namespace !== p.metadata.namespace || !matchesSelector(p.spec.podSelector, c.labels)) continue;
-      if (types.includes('Ingress')) push(ingressOf, c, p);
-      if (types.includes('Egress')) push(egressOf, c, p);
-    }
-  }
-  // A peer without namespaceSelector means the policy's own namespace; an ipBlock never selects a pod here.
-  const selects = (peer: Peer, policyNs: string, c: PodClass) =>
-    !peer.ipBlock &&
-    (peer.namespaceSelector ? matchesSelector(peer.namespaceSelector, nsLabels.get(c.namespace) ?? {}) : c.namespace === policyNs) &&
-    (peer.podSelector ? matchesSelector(peer.podSelector, c.labels) : true);
-  const peersOf = (dir: Side, rule: PolicyRule) => (dir === 'ingress' ? rule.from : rule.to) ?? [];
-  // Ports one side lets through between self and other; ALL when no policy restricts that side.
-  const side = (of: Map<PodClass, NetworkPolicyObject[]>, dir: Side, self: PodClass, other: PodClass, dst: PodClass) => {
-    const ps = of.get(self);
-    if (!ps) return { ports: ALL, via: [] as PolicyRef[] };
-    let ports = NONE;
-    const via: PolicyRef[] = [];
-    for (const p of ps) for (const rule of p.spec[dir] ?? []) {
-      const peers = peersOf(dir, rule);
-      // A rule with no peers, or an empty list of them, matches every peer.
-      if (peers.length && !peers.some((x) => selects(x, p.metadata.namespace, other))) continue;
-      ports = union(ports, portsOfRule(rule.ports, dst));
-      via.push(refOf(p));
-    }
-    return { ports, via };
-  };
+  const index = indexPolicies(r), { classes, of, selects } = index, e = evaluatorOf(index);
   const edges: NetpolEdge[] = [], anyPeer: AnyPeerRule[] = [], pairs = new PairSet<PodClass>();
   // Candidate pairs come from the rules' peers, so the cost is rules x classes, not classes squared.
-  for (const [dir, of] of [['ingress', ingressOf], ['egress', egressOf]] as const) for (const [self, ps] of of) for (const p of ps) for (const rule of p.spec[dir] ?? []) {
+  for (const dir of SIDES) for (const { self, policies } of of[dir].values()) for (const p of policies) for (const rule of p.spec[dir] ?? []) {
     const peers = peersOf(dir, rule);
     if (!peers.length) {
       // Calls out may go to any pod, so a named port stays a name; calls in resolve it on self.
@@ -112,19 +192,19 @@ export function evaluateNetworkPolicies(r: ClusterResources): NetpolResult {
   for (const [a, b] of pairs) {
     if (a.workloadId === b.workloadId) continue;
     // Allowed only when a may call out to b and b may be called by a; named ports resolve against b.
-    const out = side(egressOf, 'egress', a, b, b), inn = side(ingressOf, 'ingress', b, a, b);
+    const out = e.egress(a, b), inn = e.ingress(b, a);
     const ports = intersect(out.ports, inn.ports);
     if (!isEmpty(ports)) edges.push({ from: a.workloadId, to: b.workloadId, ports, via: [...out.via, ...inn.via] });
   }
-  return { covered: coveredMap(ingressOf, egressOf), edges: mergeEdges(edges), anyPeer: mergeAnyPeer(anyPeer) };
+  return { covered: coveredMap(of), edges: mergeEdges(edges), anyPeer: mergeAnyPeer(anyPeer) };
 }
 
-function coveredMap(ingressOf: Map<PodClass, NetworkPolicyObject[]>, egressOf: Map<PodClass, NetworkPolicyObject[]>): NetpolResult['covered'] {
+function coveredMap(of: PolicyIndex['of']): NetpolResult['covered'] {
   const sides = new Map<string, { ingress: PolicyRef[]; egress: PolicyRef[] }>();
-  for (const [dir, of] of [['ingress', ingressOf], ['egress', egressOf]] as const) for (const [c, ps] of of) {
-    const entry = sides.get(c.workloadId) ?? { ingress: [], egress: [] };
-    entry[dir].push(...ps.map(refOf));
-    sides.set(c.workloadId, entry);
+  for (const dir of SIDES) for (const { self, policies } of of[dir].values()) {
+    const entry = sides.get(self.workloadId) ?? { ingress: [], egress: [] };
+    entry[dir].push(...policies.map(refOf));
+    sides.set(self.workloadId, entry);
   }
   return new Map(
     [...sides]

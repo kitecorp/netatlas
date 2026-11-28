@@ -1,8 +1,9 @@
-import type { AuthorizationPolicyObject, ContainerPort, Labels, Mesh, NetworkPolicyObject, PodInfo, PolicyRef } from './types';
+import type { AuthorizationPolicyObject, ContainerPort, Labels, Mesh, NetworkPolicyObject, PodInfo, PolicyRef, ProxyRole } from './types';
 
 /**
  * The pods of one workload that every policy treats alike: the same labels, service account,
- * container ports and mesh. A workload has more than one while a rollout changes any of them.
+ * container ports, mesh, Istio revision and proxy role. A workload has more than one while a rollout
+ * changes any of them.
  */
 export interface PodClass {
   readonly id: string;
@@ -12,6 +13,8 @@ export interface PodClass {
   readonly serviceAccount: string;
   readonly ports: readonly ContainerPort[];
   readonly mesh: Mesh;
+  readonly istioRevision?: string;
+  readonly proxyRole?: ProxyRole;
 }
 
 /** The node that stands for every address outside the cluster. */
@@ -27,7 +30,7 @@ export function podClasses(pods: readonly PodInfo[]): PodClass[] {
     const workloadId = workloadIdOf(p);
     const labels = Object.entries(p.labels).sort(([a], [b]) => compareText(a, b));
     const ports = p.ports.map((c) => [c.name ?? '', c.port, c.protocol]).sort();
-    const key = JSON.stringify([workloadId, labels, p.serviceAccount, ports, p.mesh]);
+    const key = JSON.stringify([workloadId, labels, p.serviceAccount, ports, p.mesh, p.istioRevision ?? '', p.proxyRole ?? '']);
     if (byKey.has(key)) continue;
     const n = perWorkload.get(workloadId) ?? 0;
     perWorkload.set(workloadId, n + 1);
@@ -39,6 +42,8 @@ export function podClasses(pods: readonly PodInfo[]): PodClass[] {
       serviceAccount: p.serviceAccount,
       ports: p.ports,
       mesh: p.mesh,
+      ...(p.istioRevision && { istioRevision: p.istioRevision }),
+      ...(p.proxyRole && { proxyRole: p.proxyRole }),
     });
   }
   return [...byKey.values()];

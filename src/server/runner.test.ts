@@ -2,7 +2,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { createServer, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, expect, test } from 'vitest';
+import { afterEach, expect, test, vi } from 'vitest';
 import type { ClusterStatus } from '@/model/status';
 import { kubeConfigFor } from './logins/kubeconfig';
 import type { ClusterConfig } from './registry';
@@ -15,9 +15,9 @@ afterEach(async () => {
   for (const c of cleanups.splice(0)) await c();
 });
 
-function tokenClusterAt(port: number): ClusterConfig {
+function tokenClusterAt(port: number, token = 'eyJhbGciOi.fixture\n'): ClusterConfig {
   const dir = mkdtempSync(join(tmpdir(), 'netatlas-runner-'));
-  writeFileSync(join(dir, 'token'), 'eyJhbGciOi.fixture\n');
+  writeFileSync(join(dir, 'token'), token);
   return {
     name: 'probed',
     server: `https://127.0.0.1:${port}`,
@@ -84,3 +84,18 @@ test('an API server that accepts the connection and never answers is unreachable
     seconds: 5,
   });
 }, 10_000);
+
+test('a token file no header can carry is named on the page and in the log, neither holding the token', async () => {
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  cleanups.push(() => warn.mockRestore());
+
+  // A file of two lines: the line break left inside the token after trimming is a character no header can carry.
+  // netatlas refuses the token before it connects, so nothing needs to listen on the port.
+  const { status } = await firstStatus(tokenClusterAt(2, 'eyJhbGciOi.fixture\nsecond-line\n'));
+
+  expect({ ...reasonOf(status), warned: warn.mock.calls }).toStrictEqual({
+    state: 'unreachable',
+    reason: "netatlas's token file holds a character an Authorization header cannot carry",
+    warned: [['netatlas: cluster probed: the token file holds a character an Authorization header cannot carry']],
+  });
+});

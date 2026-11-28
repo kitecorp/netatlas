@@ -1,10 +1,22 @@
+import { join } from 'node:path';
 import { expect, test } from '@playwright/test';
 import { allowPodsIn, CART_ALLOW, changesLine } from './editor';
 import { createToken, kubectl } from './kube';
 import { fillSecret, isEmpty } from './secret';
 
-// Changes cart-allow in atlas-a; scripts/e2e/up.sh puts the shop's version back on a rerun.
+// Changes cart-allow in atlas-a, and puts the shop's version back when it ends, pass or fail.
 const ingressApps = () => kubectl('kind-atlas-a', '--namespace', 'shop', 'get', 'networkpolicy', 'cart-allow', '-o', 'jsonpath={.spec.ingress[*].from[*].podSelector.matchLabels.app}');
+
+// Playwright loads this file as CommonJS, so __dirname is this folder.
+const SHOP_POLICIES = join(__dirname, '../manifests/network-policies.yaml');
+
+// As scripts/e2e/up.sh restores it: the changed policy goes, and the shop's policies are applied again with the
+// same field manager. atlas-a has no sidecars, so a policy applied again cannot keep one from istiod.
+test.afterAll(() => {
+  kubectl('kind-atlas-a', '--namespace', 'shop', 'delete', 'networkpolicy', 'cart-allow', '--ignore-not-found');
+  kubectl('kind-atlas-a', 'apply', '--server-side', '--force-conflicts', '--field-manager', 'netatlas-e2e', '-f', SHOP_POLICIES);
+  expect(ingressApps()).toBe('frontend');
+});
 
 const FORBIDDEN =
   'Kubernetes refused the change: networkpolicies.networking.k8s.io "cart-allow" is forbidden: User "system:serviceaccount:shop:policy-reader" cannot update resource "networkpolicies" in API group "networking.k8s.io" in the namespace "shop"';

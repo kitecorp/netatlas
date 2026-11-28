@@ -27,6 +27,23 @@ test('sends a token file without its trailing newline', async () => {
   expect(opts.headers).toStrictEqual({ Authorization: 'Bearer eyJhbGciOi.fixture' });
 });
 
+// A line break inside the token cannot go into a header; the HTTP client's own error would quote the header,
+// token and all, into the log. The reason names neither the token nor the file.
+test('refuses a token file holding a character a header cannot carry, without quoting the token', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'netatlas-token-'));
+  writeFileSync(join(dir, 'token'), 'fixture-a\nfixture-b\n');
+  const opts: { headers?: Record<string, string> } = {};
+
+  const outcome = await kubeConfigFor(tokenCluster(dir))
+    .applyToHTTPSOptions(opts)
+    .then(
+      () => 'resolved',
+      (e: unknown) => (e instanceof Error ? e.message : String(e)),
+    );
+
+  expect(outcome).toBe('the token file holds a character an Authorization header cannot carry');
+});
+
 test('re-reads the token file once 60 s have passed', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'netatlas-token-'));
   const file = join(dir, 'token');

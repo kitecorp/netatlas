@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Builds the documentation site into the folder named, from the README and the pages under docs/ (site/hugo.toml says
-# how), with the Hugo release pinned in hugo-image beside this script. The repository is mounted read-only, so a build
-# changes nothing in it. Links to files the site does not publish lead to them on GitHub at the commit checked out.
-# scripts/check-site.sh checks what it built.
+# Builds the documentation site into the folder named, from the README, the pages under docs/ and the pictures under
+# docs/screenshots/ (site/hugo.toml says how), with the Hugo release pinned in hugo-image beside this script. The
+# repository is mounted read-only, so a build changes nothing in it. Links to files the site does not publish lead to
+# them on GitHub at the commit checked out. scripts/check-site.sh checks what it built.
 set -euo pipefail
 if (($# != 1)); then
   echo "usage: build-site.sh <output folder>" >&2

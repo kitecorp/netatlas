@@ -1,7 +1,8 @@
 # The chart values of the kind journeys. install.sh writes them to e2e/.generated/values.yaml with
-# ATLAS_B_SERVER replaced by atlas-b's API server on the kind network. atlas-a is the cluster netatlas
-# runs in, read with its own ServiceAccount; atlas-b is read with the reader token install.sh copies
-# into the Secret netatlas-atlas-b.
+# ATLAS_B_SERVER replaced by atlas-b's API server on the kind network and ATLAS_B_IP by atlas-b's
+# address there. atlas-a is the cluster netatlas runs in, read with its own ServiceAccount; atlas-b is
+# read with the reader token install.sh copies into the Secret netatlas-atlas-b, and its traffic comes
+# from Istio's sample Prometheus through the NodePort 30090 (e2e/manifests/prometheus-nodeport.yaml).
 clusters:
   - name: atlas-a
     login:
@@ -11,3 +12,7 @@ clusters:
     login:
       type: token
       secretName: netatlas-atlas-b
+    prometheus:
+      url: http://ATLAS_B_IP:30090
+      auth:
+        type: none

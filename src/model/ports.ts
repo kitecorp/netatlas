@@ -109,6 +109,14 @@ export function portsOfRule(ports: readonly PolicyPort[] | undefined, dst: Desti
   return normal(ports.flatMap((p) => entriesOf(p, dst)));
 }
 
+/** Whether the set lets `port` through on `protocol`: by its ranges only, because a port name resolves only on a pod. */
+export function admits(p: PortSet, port: number, protocol: Protocol): boolean {
+  return p === 'all' || p.some((e) => !isNamed(e) && e.protocol === protocol && e.from <= port && port <= e.to);
+}
+
+/** Whether the set holds a port of the protocol, by a range or a name. */
+export const hasProtocol = (p: PortSet, protocol: Protocol): boolean => p === 'all' || p.some((e) => e.protocol === protocol);
+
 export function formatPorts(p: PortSet): string {
   if (p === 'all') return 'every port';
   return p

@@ -28,7 +28,7 @@ function Lines({ id, title, lines }: { id: string; title: string; lines: readonl
   );
 }
 
-/** The side panel of one workload: the policies that select it, what may call it, what it may call, and the summary. */
+/** The side panel of one workload: the policies that select it, what may call it, what it may call, what its egress keeps it from, and the summary. */
 export function WorkloadPanel({ cluster, node, detail }: { cluster: string; node: WorkloadNode; detail: WorkloadDetail }) {
   const n = detail.selectedBy.length;
   return (
@@ -56,6 +56,19 @@ export function WorkloadPanel({ cluster, node, detail }: { cluster: string; node
       </section>
       <Lines id="panel-callers" title="May call it" lines={detail.mayCallIt} />
       <Lines id="panel-calls" title="It may call" lines={detail.itMayCall} />
+      {/* Only a workload its egress keeps from istiod or kube-dns has anything to say here. */}
+      {detail.needs.length ? (
+        <section className="panel-section" aria-labelledby="panel-needs">
+          <h3 className="section-title" id="panel-needs">
+            Egress the mesh needs
+          </h3>
+          <ul className="panel-lines">
+            {detail.needs.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
       <p className="muted panel-summary">{detail.summary}</p>
     </aside>
   );

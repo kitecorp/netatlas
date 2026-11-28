@@ -1,4 +1,5 @@
 import { ClusterNote } from '@/components/frame/ClusterNote';
+import { ClusterSection } from '@/components/frame/ClusterSection';
 import { count, POLICY_KIND_TEXT } from '@/model/format';
 import type { PolicyGroupRows } from '@/model/policies';
 import type { ClusterSnapshot } from '@/model/types';
@@ -15,10 +16,7 @@ export function PolicyList({ groups, renderedAt }: { groups: readonly PolicyGrou
   return (
     <>
       {groups.map((g) => (
-        <section key={g.cluster} className="section" aria-labelledby={`cluster-${g.cluster}`}>
-          <h2 className="cluster-title" id={`cluster-${g.cluster}`}>
-            {g.cluster}
-          </h2>
+        <ClusterSection key={g.cluster} cluster={g.cluster}>
           <ClusterNote c={g.snapshot} renderedAt={renderedAt} />
           {g.cannotRead.map((line) => (
             <p key={line} className="banner">
@@ -61,7 +59,7 @@ export function PolicyList({ groups, renderedAt }: { groups: readonly PolicyGrou
           ) : g.empty ? (
             <p className="empty">{g.empty}</p>
           ) : null}
-        </section>
+        </ClusterSection>
       ))}
     </>
   );

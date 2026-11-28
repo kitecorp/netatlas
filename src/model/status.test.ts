@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { nextRetryDelay, reduceStatus, unreachableReason, type ClusterStatus, type ProbeEvent } from './status';
+import { nextRetryDelay, PROBE_TIMEOUT_CODE, reduceStatus, unreachableReason, type ClusterStatus, type ProbeEvent } from './status';
 
 const t1 = new Date('2026-11-27T10:00:00Z');
 const t2 = new Date('2026-11-27T10:00:15Z');
@@ -70,10 +70,23 @@ describe('unreachableReason', () => {
     [coded('CERT_HAS_EXPIRED'), "the API server's certificate was not accepted"],
     [coded(401), "the API server did not accept netatlas's login"],
     [coded(403), "netatlas's login may not read this cluster"],
+    // netatlas refuses to send such a token (src/server/secret-file.ts), so the sentence is fixed and holds no part of it.
+    [coded('ERR_UNCARRIABLE_TOKEN'), "netatlas's token file holds a character an Authorization header cannot carry"],
     [coded(500), 'the API server could not be reached'],
     [new Error('something else'), 'the API server could not be reached'],
     ['a thrown string', 'the API server could not be reached'],
   ])('unreachableReason %#', (err, reason) => {
     expect(unreachableReason(err)).toBe(reason);
+  });
+
+  test.each<[unknown, string]>([
+    [{ code: 'ECONNREFUSED' }, 'Prometheus refused the connection'],
+    [{ code: PROBE_TIMEOUT_CODE }, 'Prometheus stopped answering'],
+    [{ code: 'CERT_HAS_EXPIRED' }, "Prometheus's certificate was not accepted"],
+    // The default `who` keeps "its address could not be resolved" (the table above).
+    [{ code: 'ENOTFOUND' }, 'the address of Prometheus could not be resolved'],
+    [{}, 'Prometheus could not be reached'],
+  ])("unreachableReason(err, 'Prometheus') %#", (err, reason) => {
+    expect(unreachableReason(err, 'Prometheus')).toBe(reason);
   });
 });

@@ -1,0 +1,85 @@
+# The calls atlas-b's Prometheus records, so the traffic journeys have figures to show. up.sh writes this
+# file to e2e/.generated/traffic.yaml with FORTIO_IMAGE replaced by the image up.sh names, and OUTSIDE_IP
+# by the address of the container netatlas-outside on the kind network: fortio's server outside both
+# clusters, HTTP on 8080 and TCP echo on 8078. client calls server in its own namespace, the shop's
+# recommender, the outside HTTP server by the name the ServiceEntry gives it, and the outside TCP echo by
+# its address, which Istio passes through as it knows no service there. Each load container is named
+# after what it calls.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: traffic
+  labels:
+    istio-injection: enabled
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: server
+  namespace: traffic
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: server }
+  template:
+    metadata:
+      labels: { app: server }
+    spec:
+      containers:
+        - name: server
+          image: FORTIO_IMAGE
+          args: [server]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: server
+  namespace: traffic
+spec:
+  selector: { app: server }
+  ports:
+    - { name: http, port: 8080, protocol: TCP }
+---
+# Each load runs until the pod stops (-t 0), one connection at a time (-c 1). fortio stops an HTTP load
+# whose first request fails, which happens while the target is not yet in the sidecar's configuration
+# (measured after a node restart: a 503), and the kubelet then restarts it with a growing back-off;
+# -allow-initial-errors keeps it running. A TCP load keeps running by itself (measured).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: client
+  namespace: traffic
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: client }
+  template:
+    metadata:
+      labels: { app: client }
+    spec:
+      containers:
+        - name: to-server
+          image: FORTIO_IMAGE
+          args: [load, -qps, '2', -c, '1', -t, '0', -allow-initial-errors, 'http://server.traffic:8080/']
+        - name: recommender
+          image: FORTIO_IMAGE
+          args: [load, -qps, '1', -c, '1', -t, '0', -allow-initial-errors, 'http://recommender.shop:8080/']
+        - name: outside-http
+          image: FORTIO_IMAGE
+          args: [load, -qps, '1', -c, '1', -t, '0', -allow-initial-errors, -resolve, OUTSIDE_IP, 'http://outside-http.example:8080/']
+        - name: outside-tcp
+          image: FORTIO_IMAGE
+          args: [load, -qps, '1', -c, '1', -t, '0', 'tcp://OUTSIDE_IP:8078']
+---
+apiVersion: networking.istio.io/v1
+kind: ServiceEntry
+metadata:
+  name: outside-http
+  namespace: traffic
+spec:
+  hosts: [outside-http.example]
+  ports:
+    - { number: 8080, name: http, protocol: HTTP }
+  resolution: STATIC
+  endpoints:
+    - address: OUTSIDE_IP

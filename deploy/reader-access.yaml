@@ -6,7 +6,8 @@
 #   kubectl apply -f reader-access.yaml
 #
 # The ClusterRole's rules are the chart's files/reader-rules.yaml: read on exactly the kinds netatlas
-# watches, no Secrets and no verb that changes anything. A test holds the two files together.
+# watches and on Istio's mesh config, the ConfigMap named istio, no Secrets and no verb that changes
+# anything. A test holds the two files together.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -24,6 +25,10 @@ metadata:
   name: netatlas-reader
 rules:
   - apiGroups: [""]
+    resources: [configmaps]
+    resourceNames: [istio]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
     resources: [namespaces, pods]
     verbs: [get, list, watch]
   - apiGroups: [apps]
@@ -31,6 +36,9 @@ rules:
     verbs: [get, list, watch]
   - apiGroups: [batch]
     resources: [jobs]
+    verbs: [get, list, watch]
+  - apiGroups: [networking.istio.io]
+    resources: [serviceentries, sidecars]
     verbs: [get, list, watch]
   - apiGroups: [networking.k8s.io]
     resources: [networkpolicies]

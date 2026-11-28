@@ -22,11 +22,21 @@ podAnnotations: {}
 #                 unless caData is set.
 #     clusterName, region: eks login only.
 #   istio: rootNamespace and trustDomain, when they are not istio-system and cluster.local.
+#   clusterDomain: the DNS domain the cluster's service hosts end in, when it is not cluster.local.
+#   prometheus: the Prometheus that holds the cluster's Istio metrics, when netatlas shows traffic.
+#     url: http:// or https://, with no user or password in it (use auth basic). With http:// a bearer or
+#          basic login crosses the network unencrypted: use https:// when it would travel over a network you do not trust.
+#     auth:
+#       type: none (the default), bearer or basic.
+#       secretName: bearer and basic only. The Secret holds `token` (bearer), or `username` and
+#                   `password` (basic).
+#     caData: the CA of an https:// url (base64 PEM), when it is not a public one.
+#     clusterLabel: name and value, when one Prometheus holds several clusters' metrics.
 clusters: []
 
-# Anyone who reaches the ingress sees every cluster's policies, and Apply sends a Kubernetes token:
-# protect it, and serve it over TLS (the editor offers Apply only over HTTPS). host is required when
-# enabled is true.
+# Anyone who reaches the ingress sees every cluster's policies, the traffic measured between their workloads
+# and the outside hosts they call, and Apply sends a Kubernetes token: protect it, and serve it over TLS
+# (the editor offers Apply only over HTTPS). host is required when enabled is true.
 ingress:
   enabled: false
   className: ""
