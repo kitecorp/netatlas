@@ -1,7 +1,10 @@
 # The example shop's workloads (src/model/fixtures/shop.ts), without kube-system's coredns, which kind
-# already runs. Each pod runs the pause image: netatlas reads the pods' labels, service accounts and
-# declared ports, so nothing needs to listen. Each workload runs as its own ServiceAccount, the
-# identity its Istio principal names.
+# already runs. up.sh writes this file to e2e/.generated/workloads.yaml with FORTIO_IMAGE replaced by the
+# image up.sh names. netatlas reads the pods' labels, service accounts and declared ports, so most pods run
+# the pause image and nothing listens. recommender runs fortio's server and listens on 8080 behind the
+# Service recommender, so atlas-b's load generator (traffic.template.yaml) calls a shop workload; it
+# declares no port, as the example's recommender declares none. Each workload runs as its own
+# ServiceAccount, the identity its Istio principal names.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -102,7 +105,18 @@ spec:
       serviceAccountName: recommender
       containers:
         - name: app
-          image: registry.k8s.io/pause:3.10
+          image: FORTIO_IMAGE
+          args: [server]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: recommender
+  namespace: shop
+spec:
+  selector: { app: recommender }
+  ports:
+    - { name: http, port: 8080, protocol: TCP }
 ---
 apiVersion: v1
 kind: ServiceAccount

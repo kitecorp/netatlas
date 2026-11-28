@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { authorizationPolicy, SHOP, withPolicies } from './fixtures/shop';
-import { mapState, toFlow } from './flow';
+import { authorizationPolicy, deployment, RECOMMENDER_DENY, SHOP, withPolicies } from './fixtures/shop';
+import { mapState, toFlow, type FlowNode } from './flow';
 import { clusterGraph, defaultHidden } from './graph';
+import type { ClusterResources } from './types';
 
 const BOTH = { networkpolicy: true, istio: true };
 const shop = (show = BOTH, hidden = defaultHidden(SHOP)) => toFlow(clusterGraph(SHOP), { hidden, show });
@@ -39,6 +40,25 @@ describe('toFlow', () => {
     ]);
   });
 
+  // As What stands out names them: a name another workload of the cluster also has is read with its namespace.
+  it('names a workload in its edges by namespace when another workload has its name', () => {
+    const twoFrontends: ClusterResources = {
+      ...SHOP,
+      namespaces: [...SHOP.namespaces, { name: 'web', labels: { 'kubernetes.io/metadata.name': 'web' } }],
+      pods: [...SHOP.pods, ...deployment('web', 'frontend', ['frontend-6f7d8c9b5-k2m4p'], [{ name: 'http', port: 8080, protocol: 'TCP' }])],
+    };
+    expect(toFlow(clusterGraph(twoFrontends), { hidden: defaultHidden(twoFrontends), show: BOTH }).edges.map((e) => e.ariaLabel)).toStrictEqual([
+      'From gateway to shop / frontend, TCP 8080, allowed by a NetworkPolicy',
+      'From Internet to gateway, TCP 443, allowed by a NetworkPolicy',
+      'From api to postgres, TCP 5432, allowed by a NetworkPolicy',
+      'From cart to api, POST /pay, allowed by an Istio AuthorizationPolicy',
+      'From cart to api, TCP 8443, allowed by a NetworkPolicy',
+      'From shop / frontend to cart, GET /cart, allowed by an Istio AuthorizationPolicy',
+      'From shop / frontend to cart, TCP 8080, allowed by a NetworkPolicy',
+      'From recommender to postgres, TCP 5432, allowed by a NetworkPolicy',
+    ]);
+  });
+
   it('draws edges between node ids, with the label shown on the line', () => {
     expect(shop().edges.slice(0, 2).map(({ source, target, kind, label }) => ({ source, target, kind, label }))).toStrictEqual([
       { source: 'ingress/Deployment/gateway', target: 'shop/Deployment/frontend', kind: 'networkpolicy', label: 'TCP 8080' },
@@ -70,6 +90,36 @@ describe('toFlow', () => {
       ['any caller on TCP 8080'],
     ]);
   });
+
+  // recommender's only Istio policy is a DENY. Istio lets these callers in because no ALLOW policy selects recommender
+  // (istio/api security/v1beta1/authorization_policy.proto:31 at 97748e4), so no edge says an AuthorizationPolicy
+  // allows it, and the DENY policy is named only as not refusing the call. coredns is hidden, so its edge is not drawn.
+  it('says why Istio lets a call in when no ALLOW policy selects the callee, never that a DENY policy allows it', () => {
+    const f = toFlow(clusterGraph(withPolicies(SHOP, RECOMMENDER_DENY)), { hidden: defaultHidden(SHOP), show: BOTH });
+    expect(f.edges.filter((e) => e.target === 'shop/Deployment/recommender').map((e) => e.ariaLabel)).toStrictEqual([
+      'From gateway to recommender, any request, no ALLOW policy selects recommender, so Istio lets in every request that recommender-deny does not refuse, depends on the request, accepted unless mutual TLS is STRICT',
+      'From api to recommender, any request, no ALLOW policy selects recommender, so Istio lets in every request that recommender-deny does not refuse, depends on the request',
+      'From postgres to recommender, any request, no ALLOW policy selects recommender, so Istio lets in every request that recommender-deny does not refuse, depends on the request',
+      'From cart to recommender, any request, no ALLOW policy selects recommender, so Istio lets in every request that recommender-deny does not refuse, depends on the request',
+      'From frontend to recommender, any request, no ALLOW policy selects recommender, so Istio lets in every request that recommender-deny does not refuse, depends on the request',
+    ]);
+  });
+});
+
+/** SHOP without gateway-allow's ingress rule from 0.0.0.0/0, the one edge that reaches the Internet. */
+const SHOP_WITHOUT_IPBLOCK: ClusterResources = {
+  ...SHOP,
+  networkPolicies: SHOP.networkPolicies.map((p) => (p.metadata.name === 'gateway-allow' ? { ...p, spec: { ...p.spec, ingress: [] } } : p)),
+};
+
+const INTERNET: FlowNode = { id: 'outside', type: 'outside', label: 'Internet', sub: 'outside the cluster', tone: 'normal' };
+
+// A cluster with a traffic source always draws the Internet node, so the map and the traffic view share one layout.
+it.each<[boolean, FlowNode[]]>([
+  [true, [INTERNET]],
+  [false, []],
+])('draws the Internet node no edge reaches only when asked: outside %s', (outside, expected) => {
+  expect(toFlow(clusterGraph(SHOP_WITHOUT_IPBLOCK), { hidden: new Set(), show: BOTH, outside }).nodes.filter((n) => n.type === 'outside')).toStrictEqual(expected);
 });
 
 describe('toFlow open marks', () => {

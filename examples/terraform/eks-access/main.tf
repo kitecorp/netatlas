@@ -43,12 +43,15 @@ resource "kubernetes_cluster_role_v1" "netatlas_reader" {
     name = "netatlas-reader"
   }
 
+  # Only the mesh config's rule names its object, the ConfigMap istio; the others grant every object
+  # of their kinds.
   dynamic "rule" {
     for_each = local.reader_rules
     content {
-      api_groups = rule.value.apiGroups
-      resources  = rule.value.resources
-      verbs      = rule.value.verbs
+      api_groups     = rule.value.apiGroups
+      resources      = rule.value.resources
+      resource_names = try(rule.value.resourceNames, null)
+      verbs          = rule.value.verbs
     }
   }
 }

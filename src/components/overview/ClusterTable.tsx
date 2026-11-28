@@ -45,7 +45,7 @@ function Row({ row, renderedAt }: { row: OverviewRow; renderedAt: string }) {
           <td colSpan={6}>
             Unreachable since <LocalTime iso={row.since.toISOString()} />: {row.reason}. {lastData(row, age)}
           </td>
-          <td>{age('short')}</td>
+          <td className="age">{age('short')}</td>
         </tr>
       );
     case 'reachable':
@@ -59,7 +59,7 @@ function Row({ row, renderedAt }: { row: OverviewRow; renderedAt: string }) {
           <td className={row.enforcer === NO_ENFORCER ? 'warn-text' : undefined}>{row.enforcer}</td>
           <td className={row.istio === 'none' || row.istio === CANNOT_READ ? 'muted' : undefined}>{row.istio}</td>
           {/* A reader starting again holds old data, which never reads as just updated. */}
-          <td className="muted">{row.reading ? <>reading, data from {age('short')}</> : age('short')}</td>
+          <td className="muted age">{row.reading ? <>reading, data from {age('short')}</> : age('short')}</td>
         </tr>
       );
   }

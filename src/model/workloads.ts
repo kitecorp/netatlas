@@ -1,6 +1,7 @@
 // What the cluster's controllers say about its pods: which workload owns each pod, which
 // NetworkPolicy enforcer runs, and how Istio is installed. The direct source trims the objects it
 // watches to these shapes, so the rules below read only what the cache keeps.
+import { isIstiod } from './istio-proxies';
 import type { Enforcer, IstioMode, PodInfo, WorkloadRef } from './types';
 
 /** A pod as the source keeps it: everything the model reads except its workload, plus its owner. */
@@ -66,6 +67,6 @@ export function detectEnforcer(ds: readonly DaemonSetInfo[]): Enforcer | null {
 export function detectIstio(ds: readonly DaemonSetInfo[], pods: readonly RawPod[]): IstioMode {
   if (hasDaemonSet(ds, 'ztunnel')) return 'ambient';
   // Every istiod pod carries app=istiod, revisioned installs included, while its name has a revision and a hash.
-  if (pods.some((p) => p.labels.app === 'istiod')) return 'sidecars';
+  if (pods.some(isIstiod)) return 'sidecars';
   return 'none';
 }

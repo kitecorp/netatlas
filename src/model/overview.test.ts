@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ago, DEV, EDGE, EDGE_SINCE, PROD } from './fixtures/clusters';
+import { WITH_ISTIOD } from './fixtures/shop';
 import { matchesSearch, needsAttention, overviewRows, overviewTotals, policyCountText, totalNote } from './overview';
 import type { ClusterResources, ClusterSnapshot } from './types';
 
@@ -26,6 +27,7 @@ it('gives one row per cluster', () => {
       reading: false,
       dataAt: ago(4_000),
       cannotRead: [],
+      meshEgress: [],
     },
     {
       kind: 'unreachable',
@@ -181,6 +183,25 @@ it.each<[string, ClusterSnapshot[], { title: string; text: string }[]]>([
   ],
 ])('needsAttention %#: %s', (_name, snapshots, expected) => {
   expect(needsAttention(overviewRows(snapshots))).toStrictEqual(expected);
+});
+
+// cart and api leave the mesh, so only frontend's sidecar misses istiod; the refused DaemonSets add a Cannot read item.
+const FRONTEND_GAP: ClusterSnapshot = {
+  ...PROD,
+  name: 'shop',
+  resources: {
+    ...WITH_ISTIOD,
+    pods: WITH_ISTIOD.pods.map((p) => (p.workload.name === 'cart' || p.workload.name === 'api' ? { ...p, mesh: 'none' } : p)),
+    readErrors: [{ kind: 'daemonsets', reason: 'forbidden' }],
+  },
+};
+
+it('names what keeps a workload from istiod after the open workloads and before what cannot be read', () => {
+  const items = needsAttention(overviewRows([FRONTEND_GAP]));
+  expect([items.map((i) => i.title), items.filter((i) => i.title === 'Egress the mesh needs')]).toStrictEqual([
+    ['Open workloads', 'Egress the mesh needs', 'Cannot read'],
+    [{ title: 'Egress the mesh needs', text: 'shop: shop / frontend cannot reach istiod on TCP 15012 (frontend-allow). New pods do not become ready while these policies apply: their sidecar waits for configuration from istiod.' }],
+  ]);
 });
 
 describe('matchesSearch', () => {

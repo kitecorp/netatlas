@@ -12,18 +12,21 @@ const REOPEN_MS = 5000;
 export interface LiveProps {
   /** The cluster whose changes the page follows; every cluster's when absent. */
   readonly cluster?: string;
+  /** Whether the page shows traffic, so each traffic poll renders it again too. */
+  readonly traffic?: boolean;
   readonly state: string;
   readonly age?: { readonly lead: string; readonly at: string };
   readonly renderedAt: string;
 }
 
 /**
- * Listens to the change stream (`/api/events`, for one cluster or all of them) and renders the page
- * again from the server when something changed. Changes that arrive within 2 s of a refresh are
- * gathered into one refresh at the end of that window. Only the state is a live region: the age after
- * it changes every second, and a screen reader would read each one out.
+ * Listens to the change stream (`/api/events`, for one cluster or all of them, with traffic changes
+ * only for a page that shows traffic) and renders the page again from the server when something
+ * changed. Changes that arrive within 2 s of a refresh are gathered into one refresh at the end of
+ * that window. Only the state is a live region: the age after it changes every second, and a screen
+ * reader would read each one out.
  */
-export function LiveStatus({ cluster, state, age, renderedAt }: LiveProps) {
+export function LiveStatus({ cluster, traffic, state, age, renderedAt }: LiveProps) {
   const router = useRouter();
   const [connected, setConnected] = useState(true);
   useEffect(() => {
@@ -36,8 +39,13 @@ export function LiveStatus({ cluster, state, age, renderedAt }: LiveProps) {
       last = Date.now();
       router.refresh();
     };
+    const params = new URLSearchParams();
+    if (cluster) params.set('cluster', cluster);
+    if (traffic) params.set('traffic', '1');
+    const query = params.toString();
+    const url = query ? `/api/events?${query}` : '/api/events';
     const open = (reopened: boolean) => {
-      source = new EventSource(cluster ? `/api/events?cluster=${encodeURIComponent(cluster)}` : '/api/events');
+      source = new EventSource(url);
       source.addEventListener('change', () => {
         if (pending) return;
         const wait = last + REFRESH_MS - Date.now();
@@ -64,7 +72,7 @@ export function LiveStatus({ cluster, state, age, renderedAt }: LiveProps) {
       clearTimeout(pending);
       clearTimeout(reopen);
     };
-  }, [cluster, router]);
+  }, [cluster, traffic, router]);
   return (
     <div className="dot-line">
       <span role="status" className="dot-line">

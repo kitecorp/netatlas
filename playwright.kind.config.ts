@@ -13,6 +13,8 @@ process.env.PLAYWRIGHT_NO_COPY_PROMPT = '1';
 // journey that stops atlas-b runs last.
 export default defineConfig({
   testDir: 'e2e/kind',
+  // Puts back what a run stopped inside a journey left behind, so that every run starts clean.
+  globalSetup: './e2e/kind/global-setup.ts',
   workers: 1,
   // The first read of a cluster can take a while after an install, and the unreachable journey waits for a probe.
   timeout: 90_000,

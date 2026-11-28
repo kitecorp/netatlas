@@ -1,6 +1,14 @@
 # The rules of netatlas's read-only ClusterRole: read access to exactly the kinds the direct source
 # watches, and nothing else. No Secrets, and no verb that changes anything. A test compares this file
 # with the list the source watches, so the two change together.
+#
+# The one ConfigMap netatlas reads is Istio's mesh config, named istio. RBAC lets a list or watch
+# read a ConfigMap named in resourceNames only when it selects metadata.name=istio, so no other
+# ConfigMap is readable.
+- apiGroups: [""]
+  resources: [configmaps]
+  resourceNames: [istio]
+  verbs: [get, list, watch]
 - apiGroups: [""]
   resources: [namespaces, pods]
   verbs: [get, list, watch]
@@ -9,6 +17,9 @@
   verbs: [get, list, watch]
 - apiGroups: [batch]
   resources: [jobs]
+  verbs: [get, list, watch]
+- apiGroups: [networking.istio.io]
+  resources: [serviceentries, sidecars]
   verbs: [get, list, watch]
 - apiGroups: [networking.k8s.io]
   resources: [networkpolicies]

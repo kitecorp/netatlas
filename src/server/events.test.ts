@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
+import type { TrafficSnapshot } from '@/model/traffic-status';
 import { eventsResponse, eventStream } from './events';
 import type { ClusterConfig } from './registry';
 import { createStore, type Store } from './store';
@@ -22,6 +23,29 @@ it.each<[string, string | null, string]>([
   abort.abort();
   // A listener left behind would write to the closed stream and throw here.
   store.update('atlas-a', { synced: false });
+  expect(await new Response(stream).text()).toBe(expected);
+});
+
+const TRAFFIC: TrafficSnapshot = {
+  status: { state: 'reachable', since: new Date('2026-11-28T10:00:00Z'), lastSeen: new Date('2026-11-28T10:00:00Z') },
+  clusterDomain: 'cluster.local',
+};
+/** TRAFFIC 30 s later: the source still reachable, only its last answer newer. */
+const TRAFFIC_LATER: TrafficSnapshot = { ...TRAFFIC, status: { state: 'reachable', since: new Date('2026-11-28T10:00:00Z'), lastSeen: new Date('2026-11-28T10:00:30Z') } };
+const ONE_CHANGE = 'retry: 3000\n\nevent: change\ndata: {"cluster":"atlas-a"}\n\n';
+
+it.each<[string, { traffic: boolean }, string]>([
+  ["the editor's and the policy list's stream leaves traffic out", { traffic: false }, ONE_CHANGE],
+  ['a stream that shows traffic carries both changes', { traffic: true }, `${ONE_CHANGE}event: change\ndata: {"cluster":"atlas-a"}\n\n`],
+])('a stream carries traffic changes only when it asks for them %#: %s', async (_name, opts, expected) => {
+  const store = createStore({ clusters: [{ ...config('atlas-a'), prometheus: { url: 'http://127.0.0.1:9090', auth: { type: 'none' } } }, config('atlas-b')] });
+  // The source answers before the stream opens, so the update the stream hears is one of figures only, the source still reachable.
+  store.updateTraffic('atlas-a', TRAFFIC);
+  const abort = new AbortController();
+  const stream = eventStream(store, 'atlas-a', abort.signal, opts);
+  store.updateTraffic('atlas-a', TRAFFIC_LATER);
+  store.update('atlas-a', { synced: true });
+  abort.abort();
   expect(await new Response(stream).text()).toBe(expected);
 });
 

@@ -1,6 +1,7 @@
-import { cannotReadLine, count, forbidden, installedPolicyKinds, joinNames, kindName } from './format';
+import { cannotReadLine, count, forbidden, installedPolicyKinds, joinNames, kindName, workloadText } from './format';
 import { freshness } from './freshness';
 import { clusterGraph } from './graph';
+import { meshEgressText } from './mesh-egress';
 import type { ClusterResources, ClusterSnapshot, IstioMode, WatchedKind } from './types';
 
 /** What a cluster's policies count: the policies read (null when no policy kind could be read), and the kinds refused. */
@@ -25,6 +26,8 @@ export type OverviewRow =
       readonly reading: boolean;
       readonly dataAt: Date;
       readonly cannotRead: readonly string[];
+      /** One line for each pod the mesh needs that a workload's egress policies keep it from. */
+      readonly meshEgress: readonly string[];
     }
   | {
       readonly kind: 'unreachable';
@@ -94,6 +97,12 @@ function counts(r: ClusterResources) {
   };
 }
 
+/** `<namespace> / <name> cannot reach …`: one line for each gap of each workload, in the map's order. */
+function meshEgressLines(r: ClusterResources): string[] {
+  const nodes = clusterGraph(r).namespaces.flatMap((n) => n.workloads);
+  return nodes.flatMap((n) => n.meshEgress.map((g) => `${workloadText(n.namespace, n.name)} ${meshEgressText(g)}`));
+}
+
 /** One row per cluster, in the registry's order. The data's age counts from when the reader last held the cluster's state. */
 export function overviewRows(clusters: readonly ClusterSnapshot[]): OverviewRow[] {
   return clusters.map((c): OverviewRow => {
@@ -118,6 +127,7 @@ export function overviewRows(clusters: readonly ClusterSnapshot[]): OverviewRow[
       reading: f.kind === 'reading',
       dataAt: f.at,
       cannotRead: r.readErrors.map((e) => cannotReadLine(e.kind)),
+      meshEgress: meshEgressLines(r),
     };
   });
 }
@@ -160,8 +170,9 @@ export function needsAttention(rows: readonly OverviewRow[]): Attention[] {
         },
       ]
     : [];
+  const meshEgress = reachable.flatMap((r) => r.meshEgress.map((line): Attention => ({ title: 'Egress the mesh needs', text: `${r.name}: ${line}` })));
   const cannotRead = reachable.flatMap((r) => r.cannotRead.map((line): Attention => ({ title: 'Cannot read', text: `${r.name}: ${line}` })));
-  const items = [...unenforced, ...openItems, ...cannotRead];
+  const items = [...unenforced, ...openItems, ...meshEgress, ...cannotRead];
   return items.length ? items : [{ title: '', text: 'Nothing needs attention.' }];
 }
 

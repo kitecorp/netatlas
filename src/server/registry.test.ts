@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test } from 'vitest';
-import { loadRegistry, parseRegistry, RegistryError } from './registry';
+import { clusterDomainOf, loadRegistry, parseRegistry, RegistryError } from './registry';
 
 const istioDefaults = { rootNamespace: 'istio-system', trustDomain: 'cluster.local' };
 
@@ -143,6 +143,67 @@ clusters:
     ],
   ])('refuses %#', (text, message) => {
     expect(() => parseRegistry(text, '/etc/netatlas')).toThrow(new RegistryError(message));
+  });
+
+  // Each fragment adds one fault to cluster "b", which passes every other check.
+  test.each([
+    ['prometheus: { auth: { type: none } }', 'registry: cluster "b" prometheus needs a url'],
+    ['prometheus: { url: prometheus.example:9090 }', 'registry: cluster "b" prometheus url must start with http:// or https://'],
+    // A port above 65535 passes the scheme check, but no URL parser reads it; the message leaves the URL out.
+    ['prometheus: { url: http://prometheus:99999 }', 'registry: cluster "b" prometheus url is not a URL netatlas can read'],
+    [
+      'prometheus: { url: https://reader:pw-fixture@prometheus.example }',
+      'registry: cluster "b" prometheus url must not carry a user or password: use auth basic with a Secret',
+    ],
+    ['prometheus: { url: https://prometheus.example, auth: { type: x } }', 'registry: cluster "b" prometheus auth type "x" is not none, bearer or basic'],
+    ['prometheus: { url: https://prometheus.example, auth: { type: bearer } }', 'registry: cluster "b" prometheus bearer auth needs tokenFile'],
+    [
+      'prometheus: { url: https://prometheus.example, auth: { type: basic, usernameFile: prometheus/username } }',
+      'registry: cluster "b" prometheus basic auth needs usernameFile and passwordFile',
+    ],
+    ['prometheus: { url: https://prometheus.example, caFile: prometheus/ca.crt, caData: Q0E= }', 'registry: cluster "b" prometheus has both caFile and caData'],
+    ['prometheus: { url: https://prometheus.example, clusterLabel: { name: cluster } }', 'registry: cluster "b" prometheus clusterLabel needs a name and a value'],
+    [
+      'prometheus: { url: https://prometheus.example, clusterLabel: { name: x-y, value: b } }',
+      'registry: cluster "b" prometheus clusterLabel name "x-y" is not a Prometheus label name',
+    ],
+    ['clusterDomain: Cluster_Local', 'registry: cluster "b" clusterDomain "Cluster_Local" is not a DNS name'],
+    // The root namespace goes into the path of the request for the mesh config, so it must be a namespace name.
+    ['istio: { rootNamespace: istio/system }', 'registry: cluster "b" istio rootNamespace "istio/system" is not a namespace name'],
+  ])('refuses a Prometheus, cluster domain or Istio root namespace it cannot use %#', (fragment, message) => {
+    expect(() => parseRegistry(`clusters:${tokenCluster('b', `\n    ${fragment}`)}`, '/etc/netatlas')).toThrow(new RegistryError(message));
+  });
+
+  test.each([
+    [
+      'prometheus: { url: https://prometheus.example:9090, auth: { type: bearer, tokenFile: prometheus/token }, caData: Q0E=, clusterLabel: { name: cluster, value: b } }',
+      { url: 'https://prometheus.example:9090', auth: { type: 'bearer', tokenFile: '/etc/netatlas/prometheus/token' }, ca: { data: 'Q0E=' }, clusterLabel: { name: 'cluster', value: 'b' } },
+    ],
+    [
+      'prometheus: { url: https://prometheus.example:9090, clusterLabel: { name: cluster, value: b } }',
+      { url: 'https://prometheus.example:9090', auth: { type: 'none' }, clusterLabel: { name: 'cluster', value: 'b' } },
+    ],
+    [
+      'prometheus: { url: https://prometheus.example:9090, auth: { type: basic, usernameFile: prometheus/username, passwordFile: /abs/password }, caFile: prometheus/ca.crt }',
+      {
+        url: 'https://prometheus.example:9090',
+        auth: { type: 'basic', usernameFile: '/etc/netatlas/prometheus/username', passwordFile: '/abs/password' },
+        ca: { file: '/etc/netatlas/prometheus/ca.crt' },
+      },
+    ],
+  ])("reads a Prometheus with its files resolved against the registry's folder %#", (fragment, expected) => {
+    const [b] = parseRegistry(`clusters:${tokenCluster('b', `\n    ${fragment}`)}`, '/etc/netatlas').clusters;
+
+    expect(b?.prometheus).toStrictEqual(expected);
+  });
+
+  test.each([
+    ['', 'cluster.local'],
+    ['\n    clusterDomain: corp.internal', 'corp.internal'],
+  ])('the cluster domain defaults to cluster.local %#', (fragment, expected) => {
+    const [b] = parseRegistry(`clusters:${tokenCluster('b', fragment)}`, '/etc/netatlas').clusters;
+
+    expect(b && clusterDomainOf(b)).toBe(expected);
   });
 });
 

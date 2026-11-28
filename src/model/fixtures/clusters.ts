@@ -32,6 +32,9 @@ function cluster(namespace: string, open: number, policies: number, enforcer: Cl
     enforcer,
     istio: 'none',
     istioSettings: { rootNamespace: 'istio-system', trustDomain: 'cluster.local' },
+    serviceEntries: [],
+    sidecars: [],
+    meshConfig: { state: 'found', outbound: 'unset' },
   };
 }
 

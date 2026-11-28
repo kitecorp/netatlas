@@ -1,0 +1,14 @@
+# A NodePort in front of Istio's sample Prometheus in atlas-b (up.sh applies the sample), so netatlas in
+# atlas-a reaches it at atlas-b's address on the kind network. The sample's own Service is ClusterIP only.
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus-nodeport
+  namespace: istio-system
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/component: server
+  ports:
+    - { name: http, port: 9090, targetPort: 9090, nodePort: 30090, protocol: TCP }

@@ -1,3 +1,4 @@
+import { rangeOf } from '@/model/cidr';
 import type { Protocol } from '@/model/types';
 
 // Kubernetes' rules for label keys and values (apimachinery validation IsQualifiedName and
@@ -51,33 +52,9 @@ export function parsePorts(text: string): { port: number; protocol: Protocol }[]
   return out;
 }
 
-// Leading zeros are refused, as Kubernetes refuses them in new objects (they read as octal elsewhere).
-const OCTET = '(25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)';
-const IPV4 = new RegExp(`^${OCTET}(\\.${OCTET}){3}$`);
-const HEXTET = /^[0-9a-fA-F]{1,4}$/;
-
-function validIpv6(address: string): boolean {
-  const halves = address.split('::');
-  if (halves.length > 2) return false;
-  const groups = (s: string) => (s === '' ? [] : s.split(':'));
-  const head = groups(halves[0] ?? ''), tail = groups(halves[1] ?? '');
-  // An IPv4 address may end the address and stands for two groups.
-  const last = (halves.length === 2 ? tail : head).at(-1);
-  const v4 = last !== undefined && IPV4.test(last);
-  const all = [...head, ...tail];
-  const hexGroups = v4 ? all.slice(0, -1) : all;
-  if (!hexGroups.every((g) => HEXTET.test(g))) return false;
-  const count = hexGroups.length + (v4 ? 2 : 0);
-  return halves.length === 2 ? count < 8 : count === 8;
-}
-
 /** An IPv4 or IPv6 address with a prefix length, trimmed; null for anything else. */
 export function parseCidr(text: string): string | null {
   const s = text.trim();
-  const m = /^([^/]+)\/(0|[1-9]\d{0,2})$/.exec(s);
-  if (!m?.[1] || !m[2]) return null;
-  const address = m[1], prefix = Number(m[2]);
-  if (IPV4.test(address)) return prefix <= 32 ? s : null;
-  if (address.includes(':') && validIpv6(address)) return prefix <= 128 ? s : null;
-  return null;
+  // rangeOf also reads an address alone, which an ipBlock's cidr does not accept.
+  return s.includes('/') && rangeOf(s) ? s : null;
 }

@@ -76,9 +76,9 @@ spec:
             - name: clusters
               mountPath: /etc/netatlas
               readOnly: true
-            {{- range include "netatlas.tokenClusters" . | fromJsonArray }}
-            - name: cluster-{{ .name }}
-              mountPath: {{ include "netatlas.secretDir" .name }}
+            {{- range include "netatlas.secretMounts" . | fromJsonArray }}
+            - name: {{ .volume }}
+              mountPath: {{ .dir }}
               readOnly: true
             {{- end }}
             # The root filesystem is read-only; Next.js writes only its cache and temporary files.
@@ -90,10 +90,10 @@ spec:
         - name: clusters
           configMap:
             name: {{ include "netatlas.name" . }}
-        {{- range include "netatlas.tokenClusters" . | fromJsonArray }}
-        - name: cluster-{{ .name }}
+        {{- range include "netatlas.secretMounts" . | fromJsonArray }}
+        - name: {{ .volume }}
           secret:
-            secretName: {{ .login.secretName }}
+            secretName: {{ .secretName }}
         {{- end }}
         - name: next-cache
           emptyDir: {}

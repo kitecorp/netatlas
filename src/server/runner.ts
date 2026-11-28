@@ -1,8 +1,11 @@
 import { Observable, VersionApi, type KubeConfig, type ObservableMiddleware } from '@kubernetes/client-node';
 import { reduceSync, type SyncEvent } from '@/model/freshness';
-import { nextRetryDelay, PROBE_INTERVAL_MS, PROBE_TIMEOUT_CODE, PROBE_TIMEOUT_MS, unreachableReason, type ProbeEvent } from '@/model/status';
+import { codeOf, nextRetryDelay, PROBE_INTERVAL_MS, PROBE_TIMEOUT_CODE, PROBE_TIMEOUT_MS, UNCARRIABLE_TOKEN_CODE, unreachableReason, type ProbeEvent } from '@/model/status';
+import type { ClusterResources } from '@/model/types';
+import { messageOf } from './message-of';
 import type { ClusterConfig } from './registry';
-import type { Source, SourceSink, SourceUpdate } from './sources/source';
+import { UNCARRIABLE_TOKEN } from './secret-file';
+import type { Source, SourceSink } from './sources/source';
 import type { Store } from './store';
 
 /** Hands the probe's signal to the request, so an abort ends a request the server never answers. */
@@ -34,18 +37,22 @@ export function createRunner(c: ClusterConfig, kc: KubeConfig, store: Store, sou
   let failures = 0;
   let stopped = false;
   let reading = false;
+  let tokenWarned = false;
 
   /** Moves the cluster's status and the age of its data in the store, with `resources` when a snapshot brings them. */
-  const sync = (e: SyncEvent, resources?: SourceUpdate['resources']) => {
+  const sync = (e: SyncEvent, resources?: ClusterResources) => {
     const entry = store.clusters.get(c.name);
     if (entry) store.update(c.name, { ...reduceSync(entry, e), ...(resources ? { resources } : {}) });
   };
 
   const sink: SourceSink = {
-    update: (u) => sync({ type: 'snapshot', at: u.at }, u.resources),
+    // The cluster reader sends resources; traffic has its own source and sink beside the runner.
+    update: (u) => {
+      if (u.kind === 'resources') sync({ type: 'snapshot', at: u.at }, u.resources);
+    },
     // A lost source starts again after the next probe that finds the cluster answering.
     lost: (err) => {
-      console.warn(`netatlas: cluster ${c.name}: ${source.label} stopped: ${err instanceof Error ? err.message : String(err)}`);
+      console.warn(`netatlas: cluster ${c.name}: ${source.label} stopped: ${messageOf(err)}`);
       void stopSource();
     },
   };
@@ -78,7 +85,15 @@ export function createRunner(c: ClusterConfig, kc: KubeConfig, store: Store, sou
       const version = await api.getCode({}, { middleware: [abortOn(controller.signal)], middlewareMergeStrategy: 'append' });
       return { type: 'ok', at: new Date(), kubernetesVersion: version.gitVersion };
     } catch (err) {
-      return { type: 'failed', at: new Date(), reason: unreachableReason(controller.signal.reason ?? err) };
+      const cause = controller.signal.reason ?? err;
+      // A token file no header can carry fails every probe before it connects, so the reader, whose stop is
+      // logged, never starts: the cause is logged here, once until a probe passes, and in netatlas's own words,
+      // which hold no part of the token.
+      if (codeOf(cause) === UNCARRIABLE_TOKEN_CODE && !tokenWarned) {
+        tokenWarned = true;
+        console.warn(`netatlas: cluster ${c.name}: ${UNCARRIABLE_TOKEN}`);
+      }
+      return { type: 'failed', at: new Date(), reason: unreachableReason(cause) };
     } finally {
       clearTimeout(timeout);
     }
@@ -94,8 +109,10 @@ export function createRunner(c: ClusterConfig, kc: KubeConfig, store: Store, sou
     inFlight = probe().then((event) => {
       if (stopped) return;
       sync(event);
-      if (event.type === 'ok') startSource();
-      else void stopSource();
+      if (event.type === 'ok') {
+        tokenWarned = false;
+        startSource();
+      } else void stopSource();
       failures = event.type === 'ok' ? 0 : failures + 1;
       schedule(event.type === 'ok' ? PROBE_INTERVAL_MS : nextRetryDelay(failures));
     });

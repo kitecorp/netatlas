@@ -1,9 +1,9 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
 import { useEffect, useRef, type ReactNode } from 'react';
 import { LinkPicker, type PickerChoice } from './LinkPicker';
 import { LiveStatus, type LiveProps } from './LiveStatus';
+import { useReplaceParam } from './useReplaceParam';
 
 /** Typing waits this long for the next key before the page asks the server again. */
 const SEARCH_WAIT_MS = 250;
@@ -25,18 +25,12 @@ export interface HeaderProps {
  * parameters stay as they are.
  */
 export function Header({ title, cluster, choices, search, live, children }: HeaderProps) {
-  const router = useRouter();
+  const replaceParam = useReplaceParam();
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(timer.current), []);
   const onSearch = (value: string) => {
     clearTimeout(timer.current);
-    timer.current = setTimeout(() => {
-      const params = new URLSearchParams(window.location.search);
-      if (value.trim()) params.set('q', value.trim());
-      else params.delete('q');
-      const query = params.toString();
-      router.replace(query ? `?${query}` : window.location.pathname, { scroll: false });
-    }, SEARCH_WAIT_MS);
+    timer.current = setTimeout(() => replaceParam('q', value.trim() || undefined), SEARCH_WAIT_MS);
   };
   return (
     <header className="header">

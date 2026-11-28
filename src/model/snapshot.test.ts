@@ -25,6 +25,9 @@ it('names each pod by its workload and finds the enforcer and Istio from what th
       authorizationPolicies: SHOP.authorizationPolicies,
       readErrors: [],
       istioSettings: { rootNamespace: 'istio-system', trustDomain: 'cluster.local' },
+      serviceEntries: [],
+      sidecars: [],
+      meshConfig: { state: 'found', outbound: 'unset' },
     }),
   ).toEqual({ ...SHOP, pods: [...SHOP.pods, { ...istiodPod, workload: { kind: 'Deployment', name: 'istiod' } }] }));
 
@@ -41,6 +44,9 @@ it('leaves out pods that finished', () => {
     authorizationPolicies: 'not-installed',
     readErrors: [],
     istioSettings: { rootNamespace: 'istio-system', trustDomain: 'cluster.local' },
+    serviceEntries: 'not-installed',
+    sidecars: 'not-installed',
+    meshConfig: { state: 'not-installed' },
   });
   expect(r.pods.filter((p) => p.labels.app === 'report').map((p) => p.name)).toStrictEqual(['report-running']);
 });

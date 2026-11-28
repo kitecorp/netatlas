@@ -2,12 +2,15 @@
 // security.istio.io/v1, and each carries `[k: string]: unknown` so that keys netatlas does not
 // know (newer API fields, vendor annotations) survive a round trip through the editor.
 import type { ClusterStatus } from './status';
+import type { TrafficSnapshot } from './traffic-status';
 
 export type Labels = Readonly<Record<string, string>>;
 export type Protocol = 'TCP' | 'UDP' | 'SCTP';
 export type Mesh = 'sidecar' | 'ambient' | 'none';
 export type Enforcer = 'Calico' | 'Cilium' | 'AWS VPC CNI';
 export type IstioMode = 'sidecars' | 'ambient' | 'none';
+/** What a pod's Istio proxy runs as: the word after `proxy` in the istio-proxy container's args. */
+export type ProxyRole = 'sidecar' | 'router' | 'waypoint';
 export type WatchedKind =
   | 'namespaces'
   | 'pods'
@@ -15,7 +18,9 @@ export type WatchedKind =
   | 'jobs'
   | 'daemonsets'
   | 'networkpolicies'
-  | 'authorizationpolicies';
+  | 'authorizationpolicies'
+  | 'serviceentries'
+  | 'sidecars';
 
 export interface PolicyRef {
   readonly kind: 'NetworkPolicy' | 'AuthorizationPolicy';
@@ -43,6 +48,13 @@ export interface PodInfo {
   readonly phase: string;
   readonly ports: readonly ContainerPort[];
   readonly mesh: Mesh;
+  readonly istioRevision?: string;
+  readonly proxyRole?: ProxyRole;
+  /**
+   * The ConfigMap a non-empty `SHARED_MESH_CONFIG` in one of the pod's containers names: istiod loads it
+   * as a second source of the mesh config (pilot/pkg/features/pilot.go:219-220, bootstrap/mesh.go:112-114).
+   */
+  readonly sharedMeshConfig?: string;
 }
 
 export interface ObjectMeta {
@@ -181,6 +193,60 @@ export interface AuthorizationPolicyObject {
   readonly [k: string]: unknown;
 }
 
+export interface ServiceEntrySpec {
+  readonly hosts: readonly string[];
+  readonly addresses?: readonly string[];
+  readonly ports?: readonly { readonly number: number; readonly name: string; readonly protocol?: string; readonly targetPort?: number }[];
+  readonly location?: 'MESH_EXTERNAL' | 'MESH_INTERNAL';
+  readonly resolution?: string;
+  /** `ports` maps a port's name to the endpoint's own port for it (WorkloadEntry.ports). */
+  readonly endpoints?: readonly { readonly address?: string; readonly ports?: Readonly<Record<string, number>> }[];
+  readonly exportTo?: readonly string[];
+  readonly [k: string]: unknown;
+}
+
+export interface ServiceEntryObject {
+  readonly apiVersion: 'networking.istio.io/v1';
+  readonly kind: 'ServiceEntry';
+  readonly metadata: ObjectMeta;
+  readonly spec: ServiceEntrySpec;
+}
+
+export interface SidecarObject {
+  readonly apiVersion: 'networking.istio.io/v1';
+  readonly kind: 'Sidecar';
+  readonly metadata: ObjectMeta;
+  readonly spec: {
+    readonly workloadSelector?: { readonly labels?: Labels };
+    readonly egress?: readonly { readonly hosts: readonly string[]; readonly port?: unknown; readonly [k: string]: unknown }[];
+    readonly outboundTrafficPolicy?: { readonly mode?: string; readonly [k: string]: unknown };
+    readonly [k: string]: unknown;
+  };
+}
+
+export type OutboundSetting = 'ALLOW_ANY' | 'REGISTRY_ONLY' | 'ALLOW_ANY_DYNAMIC_DNS';
+
+/**
+ * The mesh config's serviceEntryVisibility, a message (api mesh/v1alpha1/config.proto:1689-1693,
+ * 1785-1835), as netatlas reads it: whether sidecars honour it, its default visibility as written, and
+ * how many policies it lists.
+ */
+export interface ServiceEntryVisibility {
+  readonly applyToSidecars: boolean;
+  readonly defaultVisibility?: string;
+  readonly policies: number;
+}
+
+/** The mesh config's settings netatlas reads, from the ConfigMap `istio` in the Istio root namespace. */
+export type MeshSettings =
+  | {
+      readonly state: 'found';
+      readonly outbound: OutboundSetting | 'unset' | 'no-mode' | { readonly other: string };
+      readonly serviceEntryVisibility?: ServiceEntryVisibility;
+      readonly defaultServiceExportTo?: readonly string[];
+    }
+  | { readonly state: 'missing' | 'forbidden' | 'not-installed' | 'unparsable' };
+
 export interface ClusterResources {
   readonly namespaces: readonly { readonly name: string; readonly labels: Labels }[];
   readonly pods: readonly PodInfo[];
@@ -191,6 +257,9 @@ export interface ClusterResources {
   readonly enforcer: Enforcer | null;
   readonly istio: IstioMode;
   readonly istioSettings: { readonly rootNamespace: string; readonly trustDomain: string };
+  readonly serviceEntries: readonly ServiceEntryObject[] | 'not-installed';
+  readonly sidecars: readonly SidecarObject[] | 'not-installed';
+  readonly meshConfig: MeshSettings;
 }
 
 /** One cluster as the views read it: its status, and the last resources read from it (kept while it is unreachable). */
@@ -206,4 +275,6 @@ export interface ClusterSnapshot {
   readonly syncedAt?: Date;
   /** Whether the reader runs and holds the cluster's current state. */
   readonly synced: boolean;
+  /** The cluster's traffic source; absent when its registry entry names no Prometheus. */
+  readonly traffic?: TrafficSnapshot;
 }

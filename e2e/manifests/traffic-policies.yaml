@@ -1,0 +1,25 @@
+# The traffic namespace's NetworkPolicy in atlas-b, which up.sh applies with the shop's once every pod is
+# ready. server takes calls from client and lets Prometheus scrape its sidecar's merged metrics on 15020.
+# The kubelet's probes need no rule: traffic from a pod's own node is always allowed.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: server-allow
+  namespace: traffic
+spec:
+  podSelector:
+    matchLabels: { app: server }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { app: client }
+      ports:
+        - { protocol: TCP, port: 8080 }
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: istio-system }
+          podSelector:
+            matchLabels: { app.kubernetes.io/name: prometheus }
+      ports:
+        - { protocol: TCP, port: 15020 }

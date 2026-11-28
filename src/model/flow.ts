@@ -1,6 +1,9 @@
 import { OUTSIDE, uniqueRefs } from './classes';
 import { count } from './format';
 import type { ClusterGraph, GraphEdge, WorkloadNode } from './graph';
+import { noAllowPolicyText } from './istio';
+import { readableNames } from './readable-names';
+import type { TrafficMark } from './traffic';
 
 export interface FlowNode {
   readonly id: string;
@@ -16,9 +19,11 @@ export interface FlowEdge {
   readonly id: string;
   readonly source: string;
   readonly target: string;
-  readonly kind: 'networkpolicy' | 'istio';
+  readonly kind: 'networkpolicy' | 'istio' | 'traffic';
   readonly label: string;
   readonly ariaLabel: string;
+  /** How a traffic edge compares with the policies; absent while the comparison is off. */
+  readonly mark?: TrafficMark;
 }
 
 export interface Flow {
@@ -30,6 +35,8 @@ export interface Flow {
 export interface FlowOptions {
   readonly hidden: ReadonlySet<string>;
   readonly show: { readonly networkpolicy: boolean; readonly istio: boolean };
+  /** Draws the Internet node even when no edge reaches it: a cluster with a traffic source always has it. */
+  readonly outside?: boolean;
 }
 
 /** The id of a namespace's box on the map; workload ids hold slashes, so the two never meet. */
@@ -61,17 +68,22 @@ function marksOf(w: WorkloadNode): string[] {
 /**
  * The map of one cluster as React Flow draws it: each shown namespace as a box before its workloads
  * (React Flow needs a parent before its children), then the Internet as one node with a stable id
- * when an edge reaches it, and the edges of the kinds shown between shown nodes, in the graph's order.
+ * when an edge reaches it or `outside` asks for it, and the edges of the kinds shown between shown
+ * nodes, in the graph's order.
  */
 export function toFlow(g: ClusterGraph, o: FlowOptions): Flow {
   const shown = g.namespaces.filter((n) => !o.hidden.has(n.name) && n.workloads.length);
   const workloads = shown.flatMap((n) => n.workloads);
   const byId = new Map(workloads.map((w) => [w.id, w]));
-  const nameOf = (id: string) => (id === OUTSIDE ? 'Internet' : (byId.get(id)?.name ?? id));
+  // A name is shared or not across the whole cluster, hidden namespaces too, as What stands out reads it.
+  const names = readableNames(g.namespaces.flatMap((n) => n.workloads));
+  const nameOf = (id: string) => (id === OUTSIDE ? 'Internet' : (names.get(id) ?? id));
   const visible = (id: string) => id === OUTSIDE || byId.has(id);
   const drawn = g.edges.filter((e) => o.show[e.kind] && visible(e.from) && visible(e.to));
+  // An Istio edge no ALLOW policy decides is allowed by no policy: it says why Istio lets the call in.
+  const allowedBy = (e: GraphEdge) => (e.kind === 'istio' && !e.via.length ? noAllowPolicyText(nameOf(e.to), e.mayRefuse ?? []) : `allowed by ${KIND_TEXT[e.kind]}`);
   const ariaLabel = (e: GraphEdge) =>
-    [`From ${nameOf(e.from)} to ${nameOf(e.to)}`, e.label, `allowed by ${KIND_TEXT[e.kind]}`, ...(e.depends ? [e.depends] : []), ...(e.plainText ? [e.plainText] : [])].join(', ');
+    [`From ${nameOf(e.from)} to ${nameOf(e.to)}`, e.label, allowedBy(e), ...(e.depends ? [e.depends] : []), ...(e.plainText ? [e.plainText] : [])].join(', ');
   const nodes: FlowNode[] = shown.flatMap((n) => [
     { id: namespaceNodeId(n.name), type: 'namespace' as const, label: `namespace ${n.name}`, sub: '', tone: 'normal' as const },
     ...n.workloads.map((w): FlowNode => {
@@ -79,7 +91,7 @@ export function toFlow(g: ClusterGraph, o: FlowOptions): Flow {
       return { id: w.id, type: 'workload', parent: namespaceNodeId(n.name), label: w.name, sub: subOf(w), tone: w.noPolicy ? 'open' : 'normal', ...(marks.length ? { marks } : {}) };
     }),
   ]);
-  if (drawn.some((e) => e.from === OUTSIDE || e.to === OUTSIDE)) nodes.push({ id: OUTSIDE, type: 'outside', label: 'Internet', sub: 'outside the cluster', tone: 'normal' });
+  if (o.outside || drawn.some((e) => e.from === OUTSIDE || e.to === OUTSIDE)) nodes.push({ id: OUTSIDE, type: 'outside', label: 'Internet', sub: 'outside the cluster', tone: 'normal' });
   const shownNamespaces = new Set(shown.map((n) => n.name));
   return {
     nodes,
@@ -98,7 +110,8 @@ export interface MapState extends FlowOptions {
   readonly query: string;
 }
 
-const first = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
+/** A URL parameter's value as every page reads it: a parameter given twice counts once, by its first value. */
+export const firstValue = (v: string | string[] | undefined): string | undefined => (Array.isArray(v) ? v[0] : v);
 const list = (v: string) => new Set(v.split(',').map((s) => s.trim()).filter(Boolean));
 
 /**
@@ -107,13 +120,13 @@ const list = (v: string) => new Set(v.split(',').map((s) => s.trim()).filter(Boo
  * panel shows, and `q` the search. A parameter given twice counts once, by its first value.
  */
 export function mapState(params: Readonly<Record<string, string | string[] | undefined>>, namespaces: readonly string[], defaultHidden: ReadonlySet<string>): MapState {
-  const ns = first(params.ns), show = first(params.show), w = first(params.w);
+  const ns = firstValue(params.ns), show = firstValue(params.show), w = firstValue(params.w);
   const shown = ns === undefined ? undefined : list(ns);
   const kinds = show === undefined ? undefined : list(show);
   return {
     hidden: new Set(namespaces.filter((n) => (shown ? !shown.has(n) : defaultHidden.has(n)))),
     show: { networkpolicy: kinds?.has('networkpolicy') ?? true, istio: kinds?.has('istio') ?? true },
     ...(w ? { selected: w } : {}),
-    query: first(params.q)?.trim() ?? '',
+    query: firstValue(params.q)?.trim() ?? '',
   };
 }

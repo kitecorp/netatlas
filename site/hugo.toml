@@ -38,6 +38,10 @@ target = 'content/_index.md'
 source = 'docs'
 target = 'content/docs'
 files = ['*.md']
+# The README's pictures, published at the same place, so its relative links to them show them on the site as on GitHub.
+[[module.mounts]]
+source = 'docs/screenshots'
+target = 'static/docs/screenshots'
 [[module.mounts]]
 source = 'site/layouts'
 target = 'layouts'

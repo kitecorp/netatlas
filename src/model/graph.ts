@@ -1,9 +1,11 @@
 import { compareText, OUTSIDE, uniqueRefs, workloadIdOf } from './classes';
-import { cannotReadLine, forbidden, joinNames } from './format';
-import { evaluateAuthorizationPolicies } from './istio';
-import { evaluateNetworkPolicies } from './netpol';
+import { workloadIndex } from './destinations';
+import { cannotReadLine, capitalised, forbidden, joinNames, workloadText } from './format';
+import { evaluateAuthorizationPolicies, noAllowPolicyText, type IstioResult } from './istio';
+import { meshEgressGaps, meshEgressText, type MeshEgressGap } from './mesh-egress';
+import { evaluateNetworkPolicies, netpolEvaluator } from './netpol';
 import { formatPorts } from './ports';
-import type { ClusterResources, PolicyRef, WatchedKind } from './types';
+import type { ClusterResources, Mesh, PolicyRef, WatchedKind } from './types';
 
 export interface WorkloadNode {
   readonly id: string;
@@ -20,6 +22,10 @@ export interface WorkloadNode {
   /** The AuthorizationPolicies that apply to it and that its sidecar enforces. */
   readonly istioEnforced: readonly PolicyRef[];
   readonly anyPeer: readonly { readonly side: 'ingress' | 'egress'; readonly ports: string }[];
+  /** The pods the mesh needs that its egress policies keep it from. */
+  readonly meshEgress: readonly MeshEgressGap[];
+  /** `sidecar` if any of its pods is, else `ambient` if any is, else `none`. */
+  readonly mesh: Mesh;
 }
 
 export interface GraphEdge {
@@ -27,7 +33,10 @@ export interface GraphEdge {
   readonly to: string;
   readonly kind: 'networkpolicy' | 'istio';
   readonly label: string;
+  /** The policies that let the call in: on an Istio edge the ALLOW policies only, none when no ALLOW policy selects the callee. */
   readonly via: readonly PolicyRef[];
+  /** On an Istio edge, the CUSTOM and DENY policies that may refuse some of its requests (IstioEdge `mayRefuse`). */
+  readonly mayRefuse?: readonly PolicyRef[];
   readonly peer?: string;
   readonly depends?: 'depends on the request';
   readonly plainText?: 'accepted unless mutual TLS is STRICT';
@@ -43,6 +52,10 @@ export interface ClusterGraph {
    * and without the pods there is no workload to draw.
    */
   readonly unreadable: readonly WatchedKind[];
+  /** The pairs of workloads whose every call Istio refuses (IstioResult `denied`). */
+  readonly istioDenied: IstioResult['denied'];
+  /** The workloads no ALLOW policy selects, with the CUSTOM and DENY policies that do (IstioResult `withoutAllow`). */
+  readonly istioWithoutAllow: IstioResult['withoutAllow'];
 }
 
 export interface DetailLine {
@@ -57,6 +70,8 @@ export interface WorkloadDetail {
   readonly mayCallIt: readonly DetailLine[];
   readonly itMayCall: readonly DetailLine[];
   readonly summary: string;
+  /** One sentence for each pod the mesh needs that its egress policies keep it from. */
+  readonly needs: readonly string[];
 }
 
 const NO_SIDES = { ingress: [], egress: [] } as const;
@@ -65,7 +80,8 @@ const HIDDEN = 'hidden on the map';
 
 const sameRefs = (a: readonly PolicyRef[], b: readonly PolicyRef[]) => a.length === b.length && a.every((r, i) => JSON.stringify(r) === JSON.stringify(b[i]));
 
-const byOrder = <T>(...keys: ((t: T) => string)[]) => (a: T, b: T) => keys.reduce((d, k) => d || compareText(k(a), k(b)), 0);
+/** A comparator by each key in turn, by code unit. */
+export const byOrder = <T>(...keys: ((t: T) => string)[]) => (a: T, b: T) => keys.reduce((d, k) => d || compareText(k(a), k(b)), 0);
 
 /**
  * The graph is worked out once per resources object: the reader hands over a new object on every
@@ -77,7 +93,9 @@ const graphs = new WeakMap<ClusterResources, ClusterGraph>();
 export function clusterGraph(r: ClusterResources): ClusterGraph {
   const cached = graphs.get(r);
   if (cached) return cached;
-  const netpol = evaluateNetworkPolicies(r), istio = evaluateAuthorizationPolicies(r);
+  const netpol = evaluateNetworkPolicies(r), istio = evaluateAuthorizationPolicies(r), meshEgress = meshEgressGaps(r, netpolEvaluator(r));
+  // The traffic model reads a workload's mesh through the same index, so the two never disagree.
+  const index = workloadIndex(r);
   const unreadable = (['namespaces', 'pods', 'networkpolicies', 'authorizationpolicies'] as const).filter((k) => forbidden(r, k));
   // A side or a workload is open only when netatlas could read every policy that might restrict it.
   const npRead = !forbidden(r, 'networkpolicies'), allRead = npRead && !forbidden(r, 'authorizationpolicies');
@@ -101,6 +119,8 @@ export function clusterGraph(r: ClusterResources): ClusterGraph {
       istioNotEnforced: notEnforced.length > 0,
       istioEnforced: enforced,
       anyPeer: netpol.anyPeer.filter((m) => m.workload === id).map((m) => ({ side: m.side, ports: formatPorts(m.ports) })),
+      meshEgress: meshEgress.get(id) ?? [],
+      mesh: index.mesh(id),
     };
   });
   const namespaces = [...new Set(nodes.map((n) => n.namespace))].sort(compareText).map((name) => ({
@@ -111,7 +131,7 @@ export function clusterGraph(r: ClusterResources): ClusterGraph {
     ...netpol.edges.map((e): GraphEdge => ({ from: e.from, to: e.to, kind: 'networkpolicy', label: formatPorts(e.ports), via: e.via, ...(e.peer === undefined ? {} : { peer: e.peer }) })),
     ...istio.edges.map(({ from, to, label, via, ...marks }): GraphEdge => ({ from, to, kind: 'istio', label, via, ...marks })),
   ].sort(byOrder((e) => e.from, (e) => e.to, (e) => e.kind, (e) => e.label, (e) => e.peer ?? ''));
-  const graph = { namespaces, notEvaluated: istio.notEvaluated, edges, unreadable };
+  const graph = { namespaces, notEvaluated: istio.notEvaluated, edges, unreadable, istioDenied: istio.denied, istioWithoutAllow: istio.withoutAllow };
   graphs.set(r, graph);
   return graph;
 }
@@ -159,12 +179,12 @@ export function workloadDetail(g: ClusterGraph, id: string, hidden: ReadonlySet<
     const notes = [
       ...(e.peer === undefined ? [] : [e.peer]),
       // A call out passes an Istio policy of the workload it calls, not one of this workload.
-      ...(outward && e.kind === 'istio' ? [`its policy ${joinNames(e.via.map((v) => v.name))}`] : []),
+      ...(outward && e.kind === 'istio' ? [e.via.length ? `its policy ${joinNames(e.via.map((v) => v.name))}` : noAllowPolicyText('it', e.mayRefuse ?? [])] : []),
       ...(e.depends ? [e.depends] : []),
       ...(e.plainText ? [e.plainText] : []),
       ...(isHidden(peerId) ? [HIDDEN] : []),
     ];
-    const text = peerId === OUTSIDE ? 'Internet' : peer ? `${peer.namespace} / ${peer.name}` : peerId;
+    const text = peerId === OUTSIDE ? 'Internet' : peer ? workloadText(peer.namespace, peer.name) : peerId;
     return { peer: text, label: e.label, kind: e.kind, ...(notes.length ? { note: notes.join('; ') } : {}) };
   };
   // Visible peers first, then by peer; for one peer, what the NetworkPolicies allow before what Istio allows.
@@ -176,5 +196,11 @@ export function workloadDetail(g: ClusterGraph, id: string, hidden: ReadonlySet<
       .map(({ e, peerId }) => lineFor(e, peerId, outward)),
     ...node.anyPeer.filter((m) => m.side === side).map((m): DetailLine => ({ peer: ANYTHING, label: m.ports, kind: 'networkpolicy' })),
   ];
-  return { selectedBy: node.policies, mayCallIt: lines(false, 'ingress'), itMayCall: lines(true, 'egress'), summary: summary(node, g) };
+  return {
+    selectedBy: node.policies,
+    mayCallIt: lines(false, 'ingress'),
+    itMayCall: lines(true, 'egress'),
+    summary: summary(node, g),
+    needs: node.meshEgress.map((gap) => capitalised(meshEgressText(gap))),
+  };
 }

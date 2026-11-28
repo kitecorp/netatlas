@@ -1,6 +1,6 @@
 {
   "name": "netatlas",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "See the network policies of several Kubernetes clusters from one place.",
   "license": "Apache-2.0",
@@ -15,7 +15,8 @@
     "build": "next build",
     "start:standalone": "node scripts/start-standalone.mjs",
     "e2e:standalone": "playwright test",
-    "e2e:kind": "playwright test --config playwright.kind.config.ts"
+    "e2e:kind": "playwright test --config playwright.kind.config.ts",
+    "screenshots": "playwright test --config playwright.screenshots.config.ts"
   },
   "dependencies": {
     "@aws-crypto/sha256-js": "5.2.0",

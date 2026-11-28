@@ -4,11 +4,11 @@ netatlas runs as one pod, installed with its Helm chart in any cluster. This pag
 
 ## Chart and image
 
-- Chart: `oci://ghcr.io/kitecorp/charts/netatlas`, version `0.1.0`.
-- Image: `ghcr.io/kitecorp/netatlas:0.1.0`, for linux/amd64 and linux/arm64.
+- Chart: `oci://ghcr.io/kitecorp/charts/netatlas`, version `0.2.0`.
+- Image: `ghcr.io/kitecorp/netatlas:0.2.0`, for linux/amd64 and linux/arm64.
 
 ```sh
-helm install netatlas oci://ghcr.io/kitecorp/charts/netatlas --version 0.1.0 --namespace netatlas --create-namespace -f values.yaml
+helm install netatlas oci://ghcr.io/kitecorp/charts/netatlas --version 0.2.0 --namespace netatlas --create-namespace -f values.yaml
 ```
 
 The install fails with `clusters is empty: list at least one cluster for netatlas to read` until `values.yaml` lists at least one cluster. [Clusters](clusters.md) describes each entry.
@@ -18,9 +18,9 @@ The install fails with `clusters is empty: list at least one cluster for netatla
 Every object is named after the release, so `helm install netatlas` makes `netatlas` and `netatlas-reader`.
 
 - A ServiceAccount, which netatlas reads the cluster it runs in with and which carries the AWS role on EKS.
-- A ClusterRole `netatlas-reader` and its binding to that ServiceAccount, only when a cluster is read with `login.type: inCluster`: get, list and watch on namespaces, pods, ReplicaSets, DaemonSets, Jobs, NetworkPolicies and AuthorizationPolicies, and nothing else. It cannot read Secrets and cannot change anything. Without an `inCluster` cluster the pod gets no ServiceAccount token at all; on EKS, IRSA and Pod Identity mount their own.
+- A ClusterRole `netatlas-reader` and its binding to that ServiceAccount, only when a cluster is read with `login.type: inCluster`: get, list and watch on namespaces, pods, ReplicaSets, DaemonSets, Jobs, NetworkPolicies, AuthorizationPolicies, ServiceEntries, Sidecars and the one ConfigMap named `istio`, and nothing else. It cannot read Secrets and cannot change anything ([The role](traffic.md#the-role)). Without an `inCluster` cluster the pod gets no ServiceAccount token at all; on EKS, IRSA and Pod Identity mount their own.
 - A ConfigMap holding the cluster list netatlas reads at start. A change to the list restarts the pod.
-- A Deployment with one replica: each pod keeps its own watch of every cluster, so more would only add load on the API servers. The pod runs as a user that is not root, with a read-only root filesystem and no added capabilities. A cluster read with a token gets its Secret mounted in the pod.
+- A Deployment with one replica: each pod keeps its own watch of every cluster, so more would only add load on the API servers. The pod runs as a user that is not root, with a read-only root filesystem and no added capabilities. A cluster read with a token gets its Secret mounted in the pod, and so does a Prometheus with `bearer` or `basic` login ([Traffic and outbound](traffic.md#connect-netatlas-to-prometheus)).
 - A Service of type ClusterIP on port 80.
 - An Ingress, only when `ingress.enabled` is true.
 
@@ -29,7 +29,7 @@ Every object is named after the release, so `helm install netatlas` makes `netat
 | Value | Default | What it does |
 |---|---|---|
 | `image.repository` | `ghcr.io/kitecorp/netatlas` | The image. |
-| `image.tag` | empty | The image tag; empty means the chart's version, `0.1.0`. |
+| `image.tag` | empty | The image tag; empty means the chart's version, `0.2.0`. |
 | `image.pullPolicy` | `IfNotPresent` | When the node pulls the image. |
 | `serviceAccount.annotations` | none | Annotations on the ServiceAccount, such as `eks.amazonaws.com/role-arn` ([EKS](eks.md)). |
 | `podAnnotations` | none | Annotations on the pod. |
@@ -53,6 +53,6 @@ kubectl -n netatlas port-forward svc/netatlas 3000:80
 
 ## The ingress
 
-netatlas has no login of its own. Anyone who can reach the ingress's host sees every cluster's policies, so protect the ingress, for example with your identity proxy or a network that only your team reaches.
+netatlas has no login of its own. Anyone who can reach the ingress's host sees every cluster's policies, the traffic measured between their workloads and the outside hosts they call, so protect the ingress, for example with your identity proxy or a network that only your team reaches.
 
 Apply sends a Kubernetes token from the browser to netatlas, so serve the ingress over TLS: set `ingress.tls.secretName`, or end TLS at a load balancer in front of it. The editor offers Apply only on a page the browser counts as secure, which is HTTPS or `localhost` and `127.0.0.1` through port-forward; on a plain HTTP address it says why and Copy YAML still works. Without a TLS secret the install notes say so.

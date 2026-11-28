@@ -29,7 +29,7 @@ export const authorizationPolicy = (namespace: string, name: string, spec: Autho
 
 const MESHED = new Set(['shop', 'payments']);
 
-const deployment = (namespace: string, name: string, podNames: readonly string[], ports: readonly ContainerPort[], extraLabels = {}): PodInfo[] =>
+export const deployment = (namespace: string, name: string, podNames: readonly string[], ports: readonly ContainerPort[], extraLabels = {}): PodInfo[] =>
   podNames.map((pod) => ({
     name: pod,
     namespace,
@@ -131,7 +131,43 @@ export const SHOP: ClusterResources = {
   enforcer: 'Calico',
   istio: 'sidecars',
   istioSettings: { rootNamespace: 'istio-system', trustDomain: 'cluster.local' },
+  serviceEntries: [],
+  sidecars: [],
+  meshConfig: { state: 'found', outbound: 'unset' },
 };
+
+/**
+ * SHOP with Istio's control plane: istiod's two pods in the root namespace, labelled app=istiod and
+ * serving xDS on the port named grpc-xds, as the istiod chart deploys them. The shop's egress policies
+ * leave istiod out, as the example does.
+ */
+export const WITH_ISTIOD: ClusterResources = {
+  ...SHOP,
+  namespaces: [...SHOP.namespaces, { name: 'istio-system', labels: { 'kubernetes.io/metadata.name': 'istio-system' } }],
+  pods: [...SHOP.pods, ...deployment('istio-system', 'istiod', ['istiod-79f74bbfc4-fbprk', 'istiod-79f74bbfc4-w6x2n'], [{ name: 'grpc-xds', port: 15012, protocol: 'TCP' }])],
+};
+
+/**
+ * A DENY policy that refuses one address on one port, the only Istio policy of recommender. Every other
+ * request gets in because no ALLOW policy selects recommender ("If there are no ALLOW policies for the
+ * workload, allow the request", istio/api security/v1beta1/authorization_policy.proto:31 at 97748e4), not
+ * because this policy allows it. netatlas knows no pod's address, so the policy may refuse any caller's request.
+ */
+export const RECOMMENDER_DENY: AuthorizationPolicyObject = authorizationPolicy('shop', 'recommender-deny', {
+  selector: app('recommender'),
+  action: 'DENY',
+  rules: [{ from: [{ source: { ipBlocks: ['10.244.0.16/32'] } }], to: [{ operation: { ports: ['8078'] } }] }],
+});
+
+/**
+ * A DENY policy in the root namespace with no selector, so it applies to every workload in the mesh: it keeps
+ * frontend from the admin paths. netatlas does not see paths, so it may refuse some of frontend's requests to
+ * any workload, and none of another caller's.
+ */
+export const MESH_DENY_ADMIN: AuthorizationPolicyObject = authorizationPolicy('istio-system', 'mesh-deny-admin', {
+  action: 'DENY',
+  rules: [{ from: [{ source: { principals: ['cluster.local/ns/shop/sa/frontend'] } }], to: [{ operation: { paths: ['/admin*'] } }] }],
+});
 
 /** A pod's ReplicaSet is its name without the last part, as Kubernetes names a Deployment's pods. */
 const replicaSetOf = (pod: PodInfo) => pod.name.slice(0, pod.name.lastIndexOf('-'));
@@ -160,15 +196,16 @@ const sameRef = (a: NetworkPolicyObject | AuthorizationPolicyObject, b: NetworkP
   return x.kind === y.kind && x.namespace === y.namespace && x.name === y.name;
 };
 
-const upsert = <T extends NetworkPolicyObject | AuthorizationPolicyObject>(list: readonly T[], p: T): T[] =>
-  list.some((q) => sameRef(q, p)) ? list.map((q) => (sameRef(q, p) ? p : q)) : [...list, p];
+/** `list` with `p` replacing the item `same` matches it with, or added after the others. */
+export const upsert = <T>(list: readonly T[], p: T, same: (a: T, b: T) => boolean): T[] =>
+  list.some((q) => same(q, p)) ? list.map((q) => (same(q, p) ? p : q)) : [...list, p];
 
 /** `r` with each policy given replacing the one of the same kind, namespace and name, or added. */
 export function withPolicies(r: ClusterResources, ...policies: readonly (NetworkPolicyObject | AuthorizationPolicyObject)[]): ClusterResources {
   let { networkPolicies, authorizationPolicies } = r;
   for (const p of policies) {
-    if (refOf(p).kind === 'NetworkPolicy') networkPolicies = upsert(networkPolicies, p as NetworkPolicyObject);
-    else authorizationPolicies = upsert(authorizationPolicies === 'not-installed' ? [] : authorizationPolicies, p as AuthorizationPolicyObject);
+    if (refOf(p).kind === 'NetworkPolicy') networkPolicies = upsert(networkPolicies, p as NetworkPolicyObject, sameRef);
+    else authorizationPolicies = upsert(authorizationPolicies === 'not-installed' ? [] : authorizationPolicies, p as AuthorizationPolicyObject, sameRef);
   }
   return { ...r, networkPolicies, authorizationPolicies };
 }

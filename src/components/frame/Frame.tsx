@@ -10,6 +10,8 @@ export interface FrameProps {
   readonly title: string;
   /** The cluster the page shows; every cluster when absent. */
   readonly cluster?: string;
+  /** Whether the page shows traffic: only then does a traffic poll render it again. */
+  readonly traffic?: boolean;
   readonly search?: { readonly value: string; readonly placeholder: string };
   /** Controls after the cluster picker, such as the policy picker. */
   readonly picker?: ReactNode;
@@ -19,20 +21,21 @@ export interface FrameProps {
 }
 
 /** Every page's frame: the views column, the header with the cluster picker, the search and the live status. */
-export function Frame({ view, title, cluster, search, picker, renderedAt, children }: FrameProps) {
+export function Frame({ view, title, cluster, traffic, search, picker, renderedAt, children }: FrameProps) {
   const store = getStore();
-  const { names, reachable } = frameOf(store);
+  const { names, reachable, trafficSources } = frameOf(store);
   const c = cluster === undefined || !store ? undefined : snapshotOf(store, cluster);
   const label = c ? clusterLabel(c) : allClustersLabel(reachable, names.length);
   const live = {
     ...(cluster === undefined ? {} : { cluster }),
+    ...(traffic ? { traffic } : {}),
     state: label.state,
     ...(label.age ? { age: { lead: label.age.lead, at: label.age.at.toISOString() } } : {}),
     renderedAt,
   };
   return (
     <div className="frame">
-      <Nav view={view} {...(cluster === undefined ? {} : { cluster })} clusters={names.length} reachable={reachable} />
+      <Nav view={view} {...(cluster === undefined ? {} : { cluster })} clusters={names.length} reachable={reachable} trafficSources={trafficSources} />
       <div className="frame-main">
         <Header title={title} cluster={cluster ?? 'All clusters'} choices={clusterChoices(view, names, cluster)} {...(search ? { search } : {})} live={live}>
           {picker}

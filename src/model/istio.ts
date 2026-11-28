@@ -1,4 +1,5 @@
 import { compareText, podClasses, refOf, uniqueRefs, type PodClass } from './classes';
+import { joinNames } from './format';
 import { matchesSelector } from './selectors';
 import type { AuthorizationPolicyObject, ClusterResources, IstioOperation, IstioRule, IstioSource, Labels, PolicyRef } from './types';
 
@@ -7,7 +8,10 @@ export interface IstioEdge {
   readonly to: string;
   /** The requests the edge allows, such as 'GET /cart' or 'any request'. */
   readonly label: string;
+  /** The ALLOW policies that let the call in; empty when no ALLOW policy selects the callee. */
   readonly via: readonly PolicyRef[];
+  /** The CUSTOM and DENY policies that may refuse some of its requests; absent when there is none. A CUSTOM or DENY policy allows nothing. */
+  readonly mayRefuse?: readonly PolicyRef[];
   readonly depends?: 'depends on the request';
   /** Set when the caller is outside the mesh: its plain-text call gets in only while the destination's mutual TLS mode is not STRICT. */
   readonly plainText?: 'accepted unless mutual TLS is STRICT';
@@ -18,9 +22,20 @@ export interface IstioResult {
   readonly applied: ReadonlyMap<string, readonly PolicyRef[]>;
   /** The policies of workloads outside the mesh, which have no proxy to enforce them. */
   readonly notEnforced: ReadonlyMap<string, readonly PolicyRef[]>;
-  /** Policies attached to a waypoint by targetRef or targetRefs, which 0.1.0 shows as text only. */
+  /** Policies attached to a waypoint by targetRef or targetRefs, which netatlas shows as text and does not evaluate. */
   readonly notEvaluated: readonly PolicyRef[];
   readonly edges: readonly IstioEdge[];
+  /**
+   * The pairs of workloads whose every call Istio refuses, whichever pods make and serve it, sorted by
+   * caller and callee. An edge's absence does not say this: a callee with only DENY policies (or, in
+   * ambient, only CUSTOM ones) has no edge and lets in every caller no DENY rule names.
+   */
+  readonly denied: readonly { readonly from: string; readonly to: string }[];
+  /**
+   * Each workload in the mesh that CUSTOM or DENY policies select and no ALLOW policy does, with those policies: Istio
+   * lets in every request to it that they do not refuse. A workload with any pod an ALLOW policy selects is left out.
+   */
+  readonly withoutAllow: ReadonlyMap<string, readonly PolicyRef[]>;
 }
 
 type Match = 'yes' | 'no' | 'depends';
@@ -183,7 +198,7 @@ function ruleMatch(written: IstioRule, src: Source, dst: PodClass, policyNs: str
   };
 }
 
-/** A policy attached to a waypoint by targetRef or targetRefs, which 0.1.0 does not evaluate. */
+/** A policy attached to a waypoint by targetRef or targetRefs, which netatlas shows as text and does not evaluate. */
 export const attachedToWaypoint = (p: AuthorizationPolicyObject): boolean => !!p.spec.targetRef || !!p.spec.targetRefs?.length;
 
 /**
@@ -199,9 +214,16 @@ const add = (m: Map<string, PolicyRef[]>, key: string, refs: readonly PolicyRef[
 /** Istio's order: CUSTOM, then DENY, then ALLOW. AUDIT only logs; waypoint policies are not evaluated. */
 export function evaluateAuthorizationPolicies(r: ClusterResources): IstioResult {
   const applied = new Map<string, PolicyRef[]>(), notEnforced = new Map<string, PolicyRef[]>(), notEvaluated: PolicyRef[] = [], edges: IstioEdge[] = [];
-  if (r.authorizationPolicies === 'not-installed') return { applied, notEnforced, notEvaluated, edges };
+  const refusersOnly = new Map<string, PolicyRef[]>(), allowed = new Set<string>();
+  if (r.authorizationPolicies === 'not-installed') return { applied, notEnforced, notEvaluated, edges, denied: [], withoutAllow: refusersOnly };
   const { rootNamespace, trustDomain } = r.istioSettings;
   const classes = podClasses(r.pods);
+  // The class pairs refused, counted per pair of workloads: the workloads' pair is refused only when all are.
+  const refused = new Map<string, { from: string; to: string; classes: number }>();
+  const refuse = (a: PodClass, b: PodClass) => {
+    const k = JSON.stringify([a.workloadId, b.workloadId]);
+    refused.set(k, { from: a.workloadId, to: b.workloadId, classes: (refused.get(k)?.classes ?? 0) + 1 });
+  };
   const policies = r.authorizationPolicies.filter((p) => {
     if (attachedToWaypoint(p)) {
       notEvaluated.push(refOf(p));
@@ -220,6 +242,8 @@ export function evaluateAuthorizationPolicies(r: ClusterResources): IstioResult 
     }
     const of = (action: string) => applies.filter((p) => (p.spec.action ?? 'ALLOW') === action);
     const custom = of('CUSTOM'), deny = of('DENY'), allow = of('ALLOW');
+    if (allow.length) allowed.add(b.workloadId);
+    else add(refusersOnly, b.workloadId, [...custom, ...deny].map(refOf));
     for (const a of classes) {
       if (a.workloadId === b.workloadId) continue;
       // `principals`, `namespaces`, `serviceAccounts` and `trustDomains` are "derived from the peer
@@ -237,24 +261,49 @@ export function evaluateAuthorizationPolicies(r: ClusterResources): IstioResult 
       // convertAuthorizationPolicy), so on an ambient destination it decides nothing.
       const deciding = b.mesh === 'ambient' ? [] : custom.filter((p) => holds(p, 'ALLOW') !== 'no');
       const denied = deny.map((p) => [p, holds(p, 'DENY')] as const);
-      if (denied.some(([, m]) => m === 'yes')) continue;
+      if (denied.some(([, m]) => m === 'yes')) {
+        refuse(a, b);
+        continue;
+      }
       const denying = denied.filter(([, m]) => m === 'depends').map(([p]) => p);
-      // The policies that may decide against the call are named on its edge.
-      const deciders = [...deciding, ...denying].map(refOf);
-      const depends = deciders.length > 0;
+      // The policies that may decide against the call are named on its edge apart from the ALLOW policies that let it
+      // in: a CUSTOM or DENY policy only refuses. Istio builds a CUSTOM policy and a DENY policy into RBAC_DENY filters
+      // and only ALLOW policies into an RBAC_ALLOW filter, and none at all from no ALLOW policy, so a workload no ALLOW
+      // policy selects lets in every request nothing refuses (pilot/pkg/security/authz/builder/builder.go:186, 200,
+      // 205 and 284-287 at 1.32.0).
+      const refusers = [...deciding, ...denying].map(refOf);
+      const depends = refusers.length > 0;
+      const mayRefuse = depends ? { mayRefuse: refusers } : {};
       if (!allow.length) {
-        if (depends) edges.push({ from: a.workloadId, to: b.workloadId, label: ANY_REQUEST, via: deciders, depends: DEPENDS, ...plain });
+        if (depends) edges.push({ from: a.workloadId, to: b.workloadId, label: ANY_REQUEST, via: [], ...mayRefuse, depends: DEPENDS, ...plain });
         continue;
       }
       // An ALLOW policy with no rules matches nothing, so it denies every call.
+      let admitted = false;
       for (const p of allow) for (const rule of rulesOf(p)) {
         const m = ruleMatch(rule, src, b, p.metadata.namespace, 'ALLOW');
         if (m.match === 'no') continue;
-        edges.push({ from: a.workloadId, to: b.workloadId, label: m.label, via: [refOf(p), ...deciders], ...(m.match === 'depends' || depends ? { depends: DEPENDS } : {}), ...plain });
+        admitted = true;
+        edges.push({ from: a.workloadId, to: b.workloadId, label: m.label, via: [refOf(p)], ...mayRefuse, ...(m.match === 'depends' || depends ? { depends: DEPENDS } : {}), ...plain });
       }
+      if (!admitted) refuse(a, b);
     }
   }
-  return { applied: byWorkload(applied), notEnforced: byWorkload(notEnforced), notEvaluated: uniqueRefs(notEvaluated), edges: mergeIstioEdges(edges) };
+  const perWorkload = new Map<string, number>();
+  for (const c of classes) perWorkload.set(c.workloadId, (perWorkload.get(c.workloadId) ?? 0) + 1);
+  const classCount = (workloadId: string) => perWorkload.get(workloadId) ?? 0;
+  const refusedPairs = [...refused.values()]
+    .filter((p) => p.classes === classCount(p.from) * classCount(p.to))
+    .map(({ from, to }) => ({ from, to }))
+    .sort((a, b) => compareText(a.from, b.from) || compareText(a.to, b.to));
+  return {
+    applied: byWorkload(applied),
+    notEnforced: byWorkload(notEnforced),
+    notEvaluated: uniqueRefs(notEvaluated),
+    edges: mergeIstioEdges(edges),
+    denied: refusedPairs,
+    withoutAllow: byWorkload(new Map([...refusersOnly].filter(([id]) => !allowed.has(id)))),
+  };
 }
 
 const byWorkload = (m: Map<string, PolicyRef[]>): ReadonlyMap<string, readonly PolicyRef[]> =>
@@ -267,11 +316,22 @@ function mergeIstioEdges(edges: readonly IstioEdge[]): IstioEdge[] {
     const k = JSON.stringify([e.from, e.to, e.label]), seen = byKey.get(k);
     if (!seen) byKey.set(k, e);
     else {
-      const { depends: _depends, ...rest } = seen;
-      byKey.set(k, { ...rest, via: [...seen.via, ...e.via], ...(seen.depends && e.depends ? { depends: DEPENDS } : {}) });
+      const { depends: _depends, mayRefuse: _mayRefuse, ...rest } = seen;
+      const refusers = [...(seen.mayRefuse ?? []), ...(e.mayRefuse ?? [])];
+      byKey.set(k, { ...rest, via: [...seen.via, ...e.via], ...(refusers.length ? { mayRefuse: refusers } : {}), ...(seen.depends && e.depends ? { depends: DEPENDS } : {}) });
     }
   }
   return [...byKey.values()]
     .sort((a, b) => compareText(a.from, b.from) || compareText(a.to, b.to) || compareText(a.label, b.label))
-    .map((e) => ({ ...e, via: uniqueRefs(e.via) }));
+    .map((e) => ({ ...e, via: uniqueRefs(e.via), ...(e.mayRefuse ? { mayRefuse: uniqueRefs(e.mayRefuse) } : {}) }));
+}
+
+/**
+ * Why Istio lets a call in where no ALLOW policy selects the callee, as every view says it: "If there are no ALLOW
+ * policies for the workload, allow the request" once no CUSTOM or DENY policy refuses it (istio/api
+ * security/v1beta1/authorization_policy.proto:28-33 at 97748e4). Those policies allow nothing, so they are named
+ * only as not refusing the call. `callee` is how the text names the workload called.
+ */
+export function noAllowPolicyText(callee: string, refusers: readonly PolicyRef[]): string {
+  return `no ALLOW policy selects ${callee}, so Istio lets in every request that ${joinNames(refusers.map((r) => r.name))} ${refusers.length === 1 ? 'does' : 'do'} not refuse`;
 }
