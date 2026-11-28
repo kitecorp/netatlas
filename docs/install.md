@@ -4,14 +4,16 @@ netatlas runs as one pod, installed with its Helm chart in any cluster. This pag
 
 ## Chart and image
 
-- Chart: `oci://ghcr.io/kitecorp/charts/netatlas`, version `0.2.0`.
-- Image: `ghcr.io/kitecorp/netatlas:0.2.0`, for linux/amd64 and linux/arm64.
+- Chart: `oci://ghcr.io/kitecorp/charts/netatlas`, version `0.2.1`.
+- Image: `ghcr.io/kitecorp/netatlas:0.2.1`, for linux/amd64 and linux/arm64.
 
 ```sh
-helm install netatlas oci://ghcr.io/kitecorp/charts/netatlas --version 0.2.0 --namespace netatlas --create-namespace -f values.yaml
+helm install netatlas oci://ghcr.io/kitecorp/charts/netatlas --version 0.2.1 --namespace netatlas --create-namespace -f values.yaml
 ```
 
 The install fails with `clusters is empty: list at least one cluster for netatlas to read` until `values.yaml` lists at least one cluster. [Clusters](clusters.md) describes each entry.
+
+The chart is also listed on [Artifact Hub](https://artifacthub.io/packages/helm/netatlas/netatlas).
 
 ## What the chart creates
 
@@ -29,7 +31,7 @@ Every object is named after the release, so `helm install netatlas` makes `netat
 | Value | Default | What it does |
 |---|---|---|
 | `image.repository` | `ghcr.io/kitecorp/netatlas` | The image. |
-| `image.tag` | empty | The image tag; empty means the chart's version, `0.2.0`. |
+| `image.tag` | empty | The image tag; empty means the chart's appVersion, `0.2.1`. |
 | `image.pullPolicy` | `IfNotPresent` | When the node pulls the image. |
 | `serviceAccount.annotations` | none | Annotations on the ServiceAccount, such as `eks.amazonaws.com/role-arn` ([EKS](eks.md)). |
 | `podAnnotations` | none | Annotations on the pod. |

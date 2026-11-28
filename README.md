@@ -3,6 +3,7 @@
 [![CI on master](https://github.com/kitecorp/netatlas/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/kitecorp/netatlas/actions/workflows/ci.yml?query=branch%3Amaster)
 [![Latest release](https://img.shields.io/github/v/tag/kitecorp/netatlas?sort=semver&label=release)](https://github.com/kitecorp/netatlas/releases)
 [![Licence: Apache-2.0](https://img.shields.io/github/license/kitecorp/netatlas)](LICENSE)
+[![Artifact Hub](https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/netatlas)](https://artifacthub.io/packages/search?repo=netatlas)
 
 netatlas shows the NetworkPolicies and Istio AuthorizationPolicies of every Kubernetes cluster you run from one place, and compares them with the traffic Istio records. It edits a NetworkPolicy as a draft in your browser, which ends in Copy YAML for git or in Apply with your own token.
 
@@ -23,6 +24,8 @@ Policy map: which workload may call which, by NetworkPolicy and by Istio.
 Outbound: each destination outside the cluster, who may call it and who does.
 
 ## What 0.2.0 does
+
+0.2.1 is the same application as 0.2.0; it adds the chart's README and its Artifact Hub details.
 
 - **Overview**: a row per cluster with its Kubernetes version, workloads, policies, workloads no policy selects (a workload that only DENY or CUSTOM AuthorizationPolicies select counts as having a policy, though Istio lets in every request those policies do not refuse: [what 0.2.0 leaves out](docs/todo.md)), the enforcer it found and its Istio mode, and a list of what needs attention. The list warns when an egress NetworkPolicy keeps a workload from istiod, so new pods do not become ready, or from the cluster's DNS, so names do not resolve.
 - **Policy map**: one cluster's workloads by namespace, the Internet as one node, and a line for each call a NetworkPolicy or an Istio AuthorizationPolicy allows. A workload no policy selects is marked open. The map and the workload panel draw each layer's own lines, so an Istio line can be drawn for a pair a NetworkPolicy refuses, and the Traffic view's Allowed, not used lists a pair only when neither layer refuses it. The Internet node opens a short list of what leaves the cluster. The map is laid out top to bottom, with a caller above what it calls, and is scaled to fit the width of its box when first drawn, so a tall map makes the page longer. It has Zoom In, Zoom Out and Fit View buttons, and you drag it to move it ([the map](docs/traffic.md#the-map)).
@@ -48,7 +51,7 @@ clusters:
 Then install the chart and open netatlas on http://localhost:3000:
 
 ```sh
-helm install netatlas oci://ghcr.io/kitecorp/charts/netatlas --version 0.2.0 --namespace netatlas --create-namespace -f values.yaml
+helm install netatlas oci://ghcr.io/kitecorp/charts/netatlas --version 0.2.1 --namespace netatlas --create-namespace -f values.yaml
 kubectl -n netatlas port-forward svc/netatlas 3000:80
 ```
 
@@ -78,7 +81,7 @@ npm run test:package
 npm run e2e:standalone
 ```
 
-`npm run e2e:standalone` runs the built server, so it comes after `npm run build`. Both browser runs need the Chromium that `npx playwright install chromium` downloads.
+`npm run e2e:standalone` runs the built server, so it comes after `npm run build`. Both browser runs need the Chromium that `npx playwright install chromium` downloads. `npm run test:package` renders the chart with helm and tests the release's version check, `scripts/release-versions.sh`, which reads the files with yq, so it needs both.
 
 The kind battery starts two kind clusters with an example shop. The one with Istio also runs Istio's sample Prometheus and a load generator, which calls servers in that cluster and servers outside both clusters, in one docker container. The battery installs netatlas in the other cluster with its chart, waits until Prometheus has recorded the load generator's calls, and runs the browser journeys against both clusters. `down.sh` deletes the clusters and the container. It needs docker, kind, helm, kubectl and Playwright's Chromium:
 
